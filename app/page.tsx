@@ -200,39 +200,42 @@ export default function Home() {
         <div className="page">
             <div className="container">
                 <div className="filter-bar">
-                    <div className="filter-row">
-                        <div className="field">
-                            <label htmlFor="search">Search</label>
-                            <input
-                                id="search"
-                                type="search"
-                                placeholder="Search descriptions"
-                                value={search}
-                                onChange={(event) => setSearch(event.target.value)}
-                            />
+                    <div className="filter-inner">
+                        <div className="filter-row">
+                            <div className="field field-search">
+                                <label htmlFor="search">Search</label>
+                                <input
+                                    id="search"
+                                    type="search"
+                                    placeholder="Search descriptions"
+                                    value={search}
+                                    onChange={(event) => setSearch(event.target.value)}
+                                />
+                            </div>
+
+                            <div className="field">
+                                <label htmlFor="sort">Sort</label>
+                                <select
+                                    id="sort"
+                                    value={sort}
+                                    onChange={(event) =>
+                                        setSort(event.target.value as SortOption)
+                                    }
+                                >
+                                    <option value="newest">Newest</option>
+                                    <option value="az">A–Z</option>
+                                    <option value="za">Z–A</option>
+                                </select>
+                            </div>
+
+                            <button className="reset" type="button" onClick={handleReset}>
+                                Reset
+                            </button>
                         </div>
 
-                        <div className="field">
-                            <label htmlFor="sort">Sort</label>
-                            <select
-                                id="sort"
-                                value={sort}
-                                onChange={(event) => setSort(event.target.value as SortOption)}
-                            >
-                                <option value="newest">Newest</option>
-                                <option value="az">A–Z</option>
-                                <option value="za">Z–A</option>
-                            </select>
-                        </div>
-
-                        <button className="reset" type="button" onClick={handleReset}>
-                            Reset
-                        </button>
+                        <div className="results">{resultsCount} results</div>
                     </div>
-
-                    <div className="results">{resultsCount} results</div>
                 </div>
-
                 <header className="header">
                     <h1>Images</h1>
                     <p>Browse the latest uploads and filter by description.</p>
@@ -388,7 +391,8 @@ export default function Home() {
                     position: sticky;
                     top: 0;
                     z-index: 10;
-                    padding: 16px 0;
+                    width: 100%;
+                    padding: 0;
                     backdrop-filter: blur(10px);
                     background: linear-gradient(
                             180deg,
@@ -398,9 +402,19 @@ export default function Home() {
                     border-bottom: 1px solid rgba(31, 36, 40, 0.08);
                 }
 
+                .filter-inner {
+                    width: min(1040px, calc(100% - 24px));
+                    margin: 0 auto;
+                    padding: 18px 22px;
+                    border-radius: 28px;
+                    background: rgba(255, 255, 255, 0.75);
+                    border: 1px solid rgba(31, 36, 40, 0.08);
+                    box-shadow: none;
+                }
+
                 .filter-row {
-                    display: flex;
-                    flex-wrap: wrap;
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) 240px auto;
                     gap: 16px;
                     align-items: flex-end;
                 }
@@ -409,7 +423,10 @@ export default function Home() {
                     display: flex;
                     flex-direction: column;
                     gap: 6px;
-                    min-width: 200px;
+                }
+
+                .field-search {
+                    min-width: 0;
                 }
 
                 label {
@@ -422,8 +439,9 @@ export default function Home() {
 
                 input[type="search"],
                 select {
-                    padding: 10px 12px;
-                    border-radius: 12px;
+                    width: 100%;
+                    padding: 12px 20px;
+                    border-radius: 999px;
                     border: 1px solid rgba(31, 36, 40, 0.15);
                     background: rgba(255, 255, 255, 0.85);
                     font-size: 0.95rem;
@@ -439,7 +457,7 @@ export default function Home() {
 
                 .reset {
                     align-self: flex-end;
-                    padding: 10px 16px;
+                    padding: 12px 24px;
                     border-radius: 999px;
                     border: 1px solid rgba(31, 36, 40, 0.18);
                     background: rgba(255, 255, 255, 0.7);
@@ -724,6 +742,7 @@ export default function Home() {
 
                 @media (max-width: 680px) {
                     .filter-row {
+                        grid-template-columns: 1fr;
                         align-items: stretch;
                     }
 
