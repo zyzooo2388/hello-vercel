@@ -384,7 +384,7 @@ export default function Home() {
                 .container {
                     max-width: 1100px;
                     margin: 0 auto;
-                    padding: 32px 24px 64px;
+                    padding: 40px 32px 72px;
                 }
 
                 .filter-bar {
@@ -403,9 +403,9 @@ export default function Home() {
                 }
 
                 .filter-inner {
-                    width: min(1040px, calc(100% - 24px));
+                    width: min(1040px, calc(100% - 32px));
                     margin: 0 auto;
-                    padding: 18px 22px;
+                    padding: 20px 24px;
                     border-radius: 28px;
                     background: rgba(255, 255, 255, 0.75);
                     border: 1px solid rgba(31, 36, 40, 0.08);
@@ -440,7 +440,7 @@ export default function Home() {
                 input[type="search"],
                 select {
                     width: 100%;
-                    padding: 12px 20px;
+                    padding: 14px 20px;
                     border-radius: 999px;
                     border: 1px solid rgba(31, 36, 40, 0.15);
                     background: rgba(255, 255, 255, 0.85);
@@ -457,7 +457,7 @@ export default function Home() {
 
                 .reset {
                     align-self: flex-end;
-                    padding: 12px 24px;
+                    padding: 14px 26px;
                     border-radius: 999px;
                     border: 1px solid rgba(31, 36, 40, 0.18);
                     background: rgba(255, 255, 255, 0.7);
@@ -479,7 +479,7 @@ export default function Home() {
                 }
 
                 .header {
-                    padding: 24px 0 32px;
+                    padding: 28px 0 36px;
                 }
 
                 .header h1 {
@@ -551,7 +551,7 @@ export default function Home() {
                 }
 
                 .card-body {
-                    padding: 14px 18px 6px;
+                    padding: 16px 20px 8px;
                     display: flex;
                     flex-direction: column;
                     gap: 8px;
@@ -570,7 +570,7 @@ export default function Home() {
                 }
 
                 .card-footer {
-                    padding: 8px 18px 16px;
+                    padding: 10px 20px 18px;
                     font-size: 0.82rem;
                     color: #6a7178;
                     border-top: 1px solid rgba(31, 36, 40, 0.08);
@@ -584,7 +584,7 @@ export default function Home() {
                 }
 
                 .empty {
-                    padding: 48px 24px;
+                    padding: 56px 28px;
                     text-align: center;
                     background: rgba(255, 255, 255, 0.65);
                     border-radius: 20px;
@@ -715,7 +715,7 @@ export default function Home() {
                 }
 
                 .modal-body {
-                    padding: 16px 26px 24px;
+                    padding: 18px 28px 28px;
                     display: flex;
                     flex-direction: column;
                     gap: 12px;
@@ -741,6 +741,15 @@ export default function Home() {
                 }
 
                 @media (max-width: 680px) {
+                    .container {
+                        padding: 24px 16px 48px;
+                    }
+
+                    .filter-inner {
+                        width: min(1040px, calc(100% - 20px));
+                        padding: 16px 16px;
+                    }
+
                     .filter-row {
                         grid-template-columns: 1fr;
                         align-items: stretch;
@@ -748,6 +757,18 @@ export default function Home() {
 
                     .reset {
                         width: 100%;
+                    }
+
+                    .header {
+                        padding: 22px 0 28px;
+                    }
+
+                    .card-body {
+                        padding: 14px 16px 8px;
+                    }
+
+                    .card-footer {
+                        padding: 8px 16px 14px;
                     }
 
                     .grid {
@@ -759,7 +780,7 @@ export default function Home() {
                     }
 
                     .modal-body {
-                        padding: 18px 20px 24px;
+                        padding: 16px 18px 22px;
                     }
                 }
             `}</style>
