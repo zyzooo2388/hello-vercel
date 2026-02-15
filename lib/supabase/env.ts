@@ -9,7 +9,7 @@ export const getSupabaseEnv = (): SupabaseEnv => {
 
     if (!url || !anonKey) {
         throw new Error(
-            "Missing Supabase env vars. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local. Example:\nNEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co\nNEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key"
+            "Missing Supabase env vars. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local. Example:\nNEXT_PUBLIC_SUPABASE_URL=https://secure.almostcrackd.ai\nNEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key"
         )
     }
 
