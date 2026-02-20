@@ -9,14 +9,89 @@ type ImageRow = {
     image_description: string | null;
 };
 
+type VoteFeedback = {
+    type: "success" | "error";
+    message: string;
+};
+
+function VoteButtons({
+    imageId,
+    onVote,
+    disabled,
+    submitting,
+    currentVote,
+    feedback,
+}: {
+    imageId: ImageRow["id"];
+    onVote: (imageId: ImageRow["id"], value: 1 | -1) => void;
+    disabled: boolean;
+    submitting: boolean;
+    currentVote?: number;
+    feedback?: VoteFeedback;
+}) {
+    return (
+        <div style={styles.voteWrap} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.voteButtonsRow}>
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onVote(imageId, 1);
+                    }}
+                    disabled={disabled || submitting}
+                    aria-label="Upvote caption"
+                    style={{
+                        ...styles.voteButton,
+                        ...(currentVote === 1 ? styles.voteButtonActiveUp : {}),
+                        ...(disabled || submitting ? styles.voteButtonDisabled : {}),
+                    }}
+                >
+                    👍
+                </button>
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onVote(imageId, -1);
+                    }}
+                    disabled={disabled || submitting}
+                    aria-label="Downvote caption"
+                    style={{
+                        ...styles.voteButton,
+                        ...(currentVote === -1 ? styles.voteButtonActiveDown : {}),
+                        ...(disabled || submitting ? styles.voteButtonDisabled : {}),
+                    }}
+                >
+                    👎
+                </button>
+            </div>
+            {feedback && (
+                <div
+                    style={
+                        feedback.type === "success"
+                            ? styles.voteConfirm
+                            : styles.voteError
+                    }
+                >
+                    {feedback.message}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function HomePage() {
     const supabase = useMemo(() => createClient(), []);
 
     const [loading, setLoading] = useState(true);
     const [authLoading, setAuthLoading] = useState(false);
     const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [userId, setUserId] = useState<string | null>(null);
     const [images, setImages] = useState<ImageRow[]>([]);
     const [error, setError] = useState<string | null>(null);
+    const [voteSubmitting, setVoteSubmitting] = useState<Record<string, boolean>>({});
+    const [votesByImage, setVotesByImage] = useState<Record<string, number>>({});
+    const [voteFeedback, setVoteFeedback] = useState<Record<string, VoteFeedback>>({});
 
     // ✅ NEW: filter + modal state
     const [query, setQuery] = useState("");
@@ -31,12 +106,14 @@ export default function HomePage() {
 
         if (!session) {
             setUserEmail(null);
+            setUserId(null);
             setImages([]);
             setLoading(false);
             return;
         }
 
         setUserEmail(session.user.email ?? "Logged in");
+        setUserId(session.user.id);
 
         const { data, error } = await supabase
             .from("images")
@@ -78,6 +155,50 @@ export default function HomePage() {
         setAuthLoading(true);
         await supabase.auth.signOut();
         setAuthLoading(false);
+    }
+
+    async function handleVote(imageId: ImageRow["id"], value: 1 | -1) {
+        const id = String(imageId);
+        if (!userId) {
+            setVoteFeedback((prev) => ({
+                ...prev,
+                [id]: { type: "error", message: "Please sign in to vote." },
+            }));
+            return;
+        }
+
+        if (voteSubmitting[id]) return;
+        setVoteSubmitting((prev) => ({ ...prev, [id]: true }));
+        setVoteFeedback((prev) => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+
+        const { error } = await supabase.from("caption_votes").insert({
+            user_id: userId,
+            image_id: imageId,
+            vote_value: value,
+        });
+
+        if (error) {
+            setVoteFeedback((prev) => ({
+                ...prev,
+                [id]: {
+                    type: "error",
+                    message: error.message || "Unable to submit vote.",
+                },
+            }));
+            setVoteSubmitting((prev) => ({ ...prev, [id]: false }));
+            return;
+        }
+
+        setVotesByImage((prev) => ({ ...prev, [id]: value }));
+        setVoteFeedback((prev) => ({
+            ...prev,
+            [id]: { type: "success", message: "Vote recorded." },
+        }));
+        setVoteSubmitting((prev) => ({ ...prev, [id]: false }));
     }
 
     // ✅ NEW: close modal on ESC
@@ -213,6 +334,14 @@ export default function HomePage() {
                                 <div style={styles.descriptionClamped}>
                                     {img.image_description ?? "(no description)"}
                                 </div>
+                                <VoteButtons
+                                    imageId={img.id}
+                                    onVote={handleVote}
+                                    disabled={!userId}
+                                    submitting={!!voteSubmitting[String(img.id)]}
+                                    currentVote={votesByImage[String(img.id)]}
+                                    feedback={voteFeedback[String(img.id)]}
+                                />
                             </div>
                         </div>
                     ))}
@@ -451,6 +580,58 @@ const styles: Record<string, React.CSSProperties> = {
         WebkitLineClamp: 2,
         WebkitBoxOrient: "vertical",
         overflow: "hidden",
+    },
+    voteWrap: {
+        marginTop: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+    },
+    voteButtonsRow: {
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+    },
+    voteButton: {
+        padding: "6px 10px",
+        borderRadius: 10,
+        border: "1px solid rgba(0,0,0,0.12)",
+        background: "rgba(255,255,255,0.95)",
+        cursor: "pointer",
+        fontSize: 16,
+        lineHeight: 1,
+        boxShadow: "0 6px 14px rgba(0,0,0,0.08)",
+    },
+    voteButtonActiveUp: {
+        background: "rgba(34, 197, 94, 0.18)",
+        border: "1px solid rgba(34, 197, 94, 0.35)",
+    },
+    voteButtonActiveDown: {
+        background: "rgba(239, 68, 68, 0.16)",
+        border: "1px solid rgba(239, 68, 68, 0.35)",
+    },
+    voteButtonDisabled: {
+        opacity: 0.6,
+        cursor: "not-allowed",
+        boxShadow: "none",
+    },
+    voteConfirm: {
+        fontSize: 12.5,
+        color: "#1f7a3f",
+        background: "rgba(34, 197, 94, 0.12)",
+        border: "1px solid rgba(34, 197, 94, 0.2)",
+        padding: "6px 8px",
+        borderRadius: 10,
+        width: "fit-content",
+    },
+    voteError: {
+        fontSize: 12.5,
+        color: "#b42318",
+        background: "rgba(180, 35, 24, 0.08)",
+        border: "1px solid rgba(180, 35, 24, 0.18)",
+        padding: "6px 8px",
+        borderRadius: 10,
+        width: "fit-content",
     },
 
     errorText: {
