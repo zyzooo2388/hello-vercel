@@ -3,10 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 
+type CaptionRow = {
+    id: string;
+    content: string | null;
+    image_id: string | null;
+};
+
 type ImageRow = {
-    id: string | number;
-    url: string;
-    image_description: string | null;
+    id: string;
+    url: string | null;
 };
 
 type VoteFeedback = {
@@ -15,67 +20,46 @@ type VoteFeedback = {
 };
 
 function VoteButtons({
-    imageId,
     onVote,
     disabled,
     submitting,
     currentVote,
-    feedback,
 }: {
-    imageId: ImageRow["id"];
-    onVote: (imageId: ImageRow["id"], value: 1 | -1) => void;
+    onVote: (value: 1 | -1) => void;
     disabled: boolean;
     submitting: boolean;
-    currentVote?: number;
-    feedback?: VoteFeedback;
+    currentVote?: 1 | -1 | 0 | null;
 }) {
+    const isDisabled = disabled || submitting;
+
     return (
-        <div style={styles.voteWrap} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.voteButtonsRow}>
-                <button
-                    type="button"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onVote(imageId, 1);
-                    }}
-                    disabled={disabled || submitting}
-                    aria-label="Upvote caption"
-                    style={{
-                        ...styles.voteButton,
-                        ...(currentVote === 1 ? styles.voteButtonActiveUp : {}),
-                        ...(disabled || submitting ? styles.voteButtonDisabled : {}),
-                    }}
-                >
-                    👍
-                </button>
-                <button
-                    type="button"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onVote(imageId, -1);
-                    }}
-                    disabled={disabled || submitting}
-                    aria-label="Downvote caption"
-                    style={{
-                        ...styles.voteButton,
-                        ...(currentVote === -1 ? styles.voteButtonActiveDown : {}),
-                        ...(disabled || submitting ? styles.voteButtonDisabled : {}),
-                    }}
-                >
-                    👎
-                </button>
-            </div>
-            {feedback && (
-                <div
-                    style={
-                        feedback.type === "success"
-                            ? styles.voteConfirm
-                            : styles.voteError
-                    }
-                >
-                    {feedback.message}
-                </div>
-            )}
+        <div style={styles.voteButtonsRow}>
+            <button
+                type="button"
+                onClick={() => onVote(1)}
+                disabled={isDisabled}
+                aria-label="Upvote caption"
+                style={{
+                    ...styles.voteButton,
+                    ...(currentVote === 1 ? styles.voteButtonActiveUp : {}),
+                    ...(isDisabled ? styles.voteButtonDisabled : {}),
+                }}
+            >
+                👍
+            </button>
+            <button
+                type="button"
+                onClick={() => onVote(-1)}
+                disabled={isDisabled}
+                aria-label="Downvote caption"
+                style={{
+                    ...styles.voteButton,
+                    ...(currentVote === -1 ? styles.voteButtonActiveDown : {}),
+                    ...(isDisabled ? styles.voteButtonDisabled : {}),
+                }}
+            >
+                👎
+            </button>
         </div>
     );
 }
@@ -87,15 +71,13 @@ export default function HomePage() {
     const [authLoading, setAuthLoading] = useState(false);
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [userId, setUserId] = useState<string | null>(null);
-    const [images, setImages] = useState<ImageRow[]>([]);
+    const [captions, setCaptions] = useState<CaptionRow[]>([]);
+    const [imagesById, setImagesById] = useState<Record<string, string>>({});
     const [error, setError] = useState<string | null>(null);
-    const [voteSubmitting, setVoteSubmitting] = useState<Record<string, boolean>>({});
-    const [votesByImage, setVotesByImage] = useState<Record<string, number>>({});
-    const [voteFeedback, setVoteFeedback] = useState<Record<string, VoteFeedback>>({});
-
-    // ✅ NEW: filter + modal state
-    const [query, setQuery] = useState("");
-    const [selected, setSelected] = useState<ImageRow | null>(null);
+    const [votingByCaptionId, setVotingByCaptionId] = useState<Record<string, boolean>>({});
+    const [voteByCaptionId, setVoteByCaptionId] = useState<Record<string, 1 | -1 | 0 | null>>({});
+    const [voteFeedback, setVoteFeedback] = useState<VoteFeedback | null>(null);
+    const [currentIndex, setCurrentIndex] = useState(0);
 
     async function load() {
         setLoading(true);
@@ -107,7 +89,10 @@ export default function HomePage() {
         if (!session) {
             setUserEmail(null);
             setUserId(null);
-            setImages([]);
+            setCaptions([]);
+            setImagesById({});
+            setVoteByCaptionId({});
+            setCurrentIndex(0);
             setLoading(false);
             return;
         }
@@ -115,13 +100,78 @@ export default function HomePage() {
         setUserEmail(session.user.email ?? "Logged in");
         setUserId(session.user.id);
 
-        const { data, error } = await supabase
-            .from("images")
-            .select("id,url,image_description")
-            .order("id", { ascending: false });
+        let captionsData: CaptionRow[] = [];
+        const { data: createdOrder, error: createdOrderError } = await supabase
+            .from("captions")
+            .select("id, content, image_id")
+            .order("created_datetime_utc", { ascending: false });
 
-        if (error) setError(error.message);
-        setImages(data ?? []);
+        if (createdOrderError) {
+            const { data: fallbackData, error: fallbackError } = await supabase
+                .from("captions")
+                .select("id, content, image_id")
+                .order("id", { ascending: false });
+
+            if (fallbackError) {
+                setError(fallbackError.message);
+                setCaptions([]);
+                setImagesById({});
+                setVoteByCaptionId({});
+                setLoading(false);
+                return;
+            }
+
+            captionsData = (fallbackData ?? []) as CaptionRow[];
+        } else {
+            captionsData = (createdOrder ?? []) as CaptionRow[];
+        }
+
+        const { data: imagesData, error: imagesError } = await supabase
+            .from("images")
+            .select("id, url");
+
+        if (imagesError) {
+            setError(imagesError.message);
+            setCaptions([]);
+            setImagesById({});
+            setVoteByCaptionId({});
+            setLoading(false);
+            return;
+        }
+
+        const imageMap: Record<string, string> = {};
+        (imagesData as ImageRow[] | null)?.forEach((row) => {
+            if (row.id && row.url) imageMap[row.id] = row.url;
+        });
+
+        const { data: votesData, error: votesError } = await supabase
+            .from("caption_votes")
+            .select("caption_id, vote_value")
+            .eq("profile_id", session.user.id);
+
+        if (votesError) {
+            setError(votesError.message);
+            setCaptions([]);
+            setImagesById({});
+            setVoteByCaptionId({});
+            setLoading(false);
+            return;
+        }
+
+        const voteMap: Record<string, 1 | -1 | 0 | null> = {};
+        (votesData ?? []).forEach((row) => {
+            if (row.caption_id) {
+                voteMap[row.caption_id] = row.vote_value as 1 | -1 | 0 | null;
+            }
+        });
+
+        setCaptions(captionsData);
+        setImagesById(imageMap);
+        setVoteByCaptionId(voteMap);
+
+        const firstUnvotedIndex = captionsData.findIndex((caption) => !voteMap[caption.id]);
+        setCurrentIndex(firstUnvotedIndex === -1 ? 0 : firstUnvotedIndex);
+
         setLoading(false);
     }
 
@@ -157,67 +207,64 @@ export default function HomePage() {
         setAuthLoading(false);
     }
 
-    async function handleVote(imageId: ImageRow["id"], value: 1 | -1) {
-        const id = String(imageId);
+    async function handleVote(captionId: string, value: 1 | -1) {
         if (!userId) {
-            setVoteFeedback((prev) => ({
-                ...prev,
-                [id]: { type: "error", message: "Please sign in to vote." },
-            }));
+            setVoteFeedback({ type: "error", message: "Please sign in to vote." });
             return;
         }
 
-        if (voteSubmitting[id]) return;
-        setVoteSubmitting((prev) => ({ ...prev, [id]: true }));
-        setVoteFeedback((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
-        });
+        if (votingByCaptionId[captionId]) return;
+        setVotingByCaptionId((prev) => ({ ...prev, [captionId]: true }));
+        setVoteFeedback(null);
 
-        const { error } = await supabase.from("caption_votes").insert({
-            user_id: userId,
-            image_id: imageId,
+        const now = new Date().toISOString();
+        const hasExistingVote = voteByCaptionId[captionId] != null;
+        const payload: {
+            profile_id: string;
+            caption_id: string;
+            vote_value: 1 | -1;
+            created_datetime_utc: string;
+            modified_datetime_utc?: string;
+        } = {
+            profile_id: userId,
+            caption_id: captionId,
             vote_value: value,
-        });
+            created_datetime_utc: now,
+        };
+
+        if (hasExistingVote) {
+            payload.modified_datetime_utc = now;
+        }
+
+        const { error } = await supabase
+            .from("caption_votes")
+            .upsert(payload, { onConflict: "profile_id,caption_id" });
 
         if (error) {
-            setVoteFeedback((prev) => ({
-                ...prev,
-                [id]: {
-                    type: "error",
-                    message: error.message || "Unable to submit vote.",
-                },
-            }));
-            setVoteSubmitting((prev) => ({ ...prev, [id]: false }));
+            console.error("Vote error:", error);
+            setVoteFeedback({ type: "error", message: "Unable to record vote. Please try again." });
+            setVotingByCaptionId((prev) => ({ ...prev, [captionId]: false }));
             return;
         }
 
-        setVotesByImage((prev) => ({ ...prev, [id]: value }));
-        setVoteFeedback((prev) => ({
-            ...prev,
-            [id]: { type: "success", message: "Vote recorded." },
-        }));
-        setVoteSubmitting((prev) => ({ ...prev, [id]: false }));
+        setVoteByCaptionId((prev) => ({ ...prev, [captionId]: value }));
+        setVoteFeedback({ type: "success", message: "Vote recorded." });
+        setVotingByCaptionId((prev) => ({ ...prev, [captionId]: false }));
     }
 
-    // ✅ NEW: close modal on ESC
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
-            if (e.key === "Escape") setSelected(null);
+            if (e.key === "ArrowLeft") {
+                setCurrentIndex((prev) => Math.max(0, prev - 1));
+            }
+            if (e.key === "ArrowRight") {
+                setCurrentIndex((prev) => Math.min(captions.length - 1, prev + 1));
+            }
         }
-        if (selected) window.addEventListener("keydown", onKeyDown);
-        return () => window.removeEventListener("keydown", onKeyDown);
-    }, [selected]);
 
-    // ✅ NEW: filtered images (by description)
-    const filteredImages = useMemo(() => {
-        const q = query.trim().toLowerCase();
-        if (!q) return images;
-        return images.filter((img) =>
-            (img.image_description ?? "").toLowerCase().includes(q)
-        );
-    }, [images, query]);
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [captions.length]);
 
     if (loading) {
         return (
@@ -227,16 +274,13 @@ export default function HomePage() {
         );
     }
 
-    // Not logged in => show login card
     if (!userEmail) {
         return (
             <div style={styles.page}>
                 <div style={styles.loginCard}>
-                    <div style={styles.badge}>Protected Gallery</div>
+                    <div style={styles.badge}>Protected Rater</div>
                     <h1 style={styles.loginTitle}>Welcome</h1>
-                    <p style={styles.loginSubtitle}>
-                        Please sign in to view the image gallery from Supabase.
-                    </p>
+                    <p style={styles.loginSubtitle}>Please sign in to rate captions.</p>
 
                     <button
                         onClick={signInWithGoogle}
@@ -259,14 +303,27 @@ export default function HomePage() {
         );
     }
 
-    // Logged in => show images
+    const total = captions.length;
+    const currentCaption = captions[currentIndex];
+    const currentVote = currentCaption?.id ? voteByCaptionId[currentCaption.id] : null;
+    const hasVoteForCurrent = currentCaption?.id ? voteByCaptionId[currentCaption.id] != null : false;
+    const votedCount = captions.reduce((count, caption) => {
+        if (voteByCaptionId[caption.id] != null) return count + 1;
+        return count;
+    }, 0);
+    const remaining = Math.max(0, total - votedCount);
+
     return (
         <div style={styles.page}>
-            <div style={styles.container}>
-                <header style={styles.header}>
+            <div style={styles.raterShell}>
+                <header style={styles.raterHeader}>
                     <div>
-                        <h1 style={styles.title}>Images</h1>
-                        <p style={styles.subtitle}>Signed in as {userEmail}</p>
+                        <div style={styles.progressLabel}>
+                            {total === 0
+                                ? "CAPTION 0 / 0"
+                                : `CAPTION ${currentIndex + 1} / ${total}`}
+                        </div>
+                        <div style={styles.subtitle}>Signed in as {userEmail}</div>
                     </div>
 
                     <button
@@ -281,109 +338,86 @@ export default function HomePage() {
                     </button>
                 </header>
 
-                {/* ✅ NEW: Filter bar */}
-                <section style={styles.filterBar}>
-                    <div style={styles.filterLeft}>
-                        <div style={styles.filterLabel}>SEARCH</div>
-                        <input
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            placeholder="Search descriptions"
-                            style={styles.filterInput}
-                        />
-                        <div style={styles.resultsText}>
-                            {filteredImages.length} results
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={() => setQuery("")}
-                        style={styles.resetButton}
-                        disabled={!query.trim()}
-                        title="Clear search"
-                    >
-                        Reset
-                    </button>
-                </section>
-
                 {error && <p style={{ ...styles.errorText, marginTop: 8 }}>{error}</p>}
 
-                <div style={styles.grid}>
-                    {filteredImages.map((img) => (
-                        <div
-                            key={String(img.id)}
-                            style={styles.card}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setSelected(img)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") setSelected(img);
-                            }}
-                        >
-                            <div style={styles.imageWrap}>
+                {total === 0 ? (
+                    <div style={styles.emptyCard}>No captions available.</div>
+                ) : (
+                    <div style={styles.card}>
+                        <div style={styles.imageWrap}>
+                            {currentCaption?.image_id && imagesById[currentCaption.image_id] ? (
                                 <img
-                                    src={img.url}
-                                    alt={img.image_description ?? ""}
+                                    src={imagesById[currentCaption.image_id]}
+                                    alt={currentCaption.content ?? ""}
                                     style={styles.image}
-                                    loading="lazy"
                                 />
-                            </div>
-
-                            <div style={styles.cardBody}>
-                                {/* ✅ NEW: only show partial description here */}
-                                <div style={styles.descriptionClamped}>
-                                    {img.image_description ?? "(no description)"}
+                            ) : (
+                                <div style={styles.imageMissing}>
+                                    No image row for this image_id
                                 </div>
-                                <VoteButtons
-                                    imageId={img.id}
-                                    onVote={handleVote}
-                                    disabled={!userId}
-                                    submitting={!!voteSubmitting[String(img.id)]}
-                                    currentVote={votesByImage[String(img.id)]}
-                                    feedback={voteFeedback[String(img.id)]}
-                                />
+                            )}
+                        </div>
+
+                        <div style={styles.cardBody}>
+                            <div style={styles.captionText}>
+                                {currentCaption?.content ?? "(no caption)"}
                             </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
 
-            {/* ✅ NEW: Modal for image + scrollable description */}
-            {selected && (
-                <div
-                    style={styles.modalOverlay}
-                    onClick={() => setSelected(null)}
-                    role="dialog"
-                    aria-modal="true"
-                >
-                    <div
-                        style={styles.modal}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div style={styles.modalTop}>
-                            <div style={styles.modalTitle}>Image</div>
-                            <button style={styles.closeButton} onClick={() => setSelected(null)}>
-                                ✕
-                            </button>
-                        </div>
-
-                        <div style={styles.modalImageWrap}>
-                            <img
-                                src={selected.url}
-                                alt={selected.image_description ?? ""}
-                                style={styles.modalImage}
+                            <VoteButtons
+                                onVote={(value) => currentCaption?.id && handleVote(currentCaption.id, value)}
+                                disabled={!userId || !currentCaption?.id}
+                                submitting={currentCaption?.id ? !!votingByCaptionId[currentCaption.id] : false}
+                                currentVote={currentVote}
                             />
-                        </div>
 
-                        <div style={styles.modalDescBox}>
-                            <div style={styles.modalDescTitle}>Description</div>
-                            <div style={styles.modalDescScrollable}>
-                                {selected.image_description ?? "(no description)"}
+                            {voteFeedback && (
+                                <div
+                                    style={
+                                        voteFeedback.type === "success"
+                                            ? styles.voteConfirm
+                                            : styles.voteError
+                                    }
+                                >
+                                    {voteFeedback.message}
+                                </div>
+                            )}
+
+                            <div style={styles.navigationRow}>
+                                <button
+                                    type="button"
+                                    onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
+                                    disabled={currentIndex === 0}
+                                    style={{
+                                        ...styles.navButton,
+                                        ...(currentIndex === 0 ? styles.navButtonDisabled : {}),
+                                    }}
+                                >
+                                    Prev
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setCurrentIndex((prev) => Math.min(total - 1, prev + 1))
+                                    }
+                                    disabled={!hasVoteForCurrent || currentIndex === total - 1}
+                                    style={{
+                                        ...styles.navButtonPrimary,
+                                        ...(!hasVoteForCurrent || currentIndex === total - 1
+                                            ? styles.navButtonDisabled
+                                            : {}),
+                                    }}
+                                >
+                                    Next
+                                </button>
+                            </div>
+
+                            <div style={styles.remainingText}>
+                                {remaining} captions left to vote
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
         </div>
     );
 }
@@ -395,8 +429,6 @@ const styles: Record<string, React.CSSProperties> = {
             "radial-gradient(1200px 600px at 20% 10%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0) 55%), linear-gradient(135deg, #f5efe6 0%, #e8dfd1 50%, #d9cfc3 100%)",
         padding: 24,
     },
-
-    container: { maxWidth: 1100, margin: "0 auto" },
 
     loading: {
         maxWidth: 420,
@@ -410,7 +442,7 @@ const styles: Record<string, React.CSSProperties> = {
         boxShadow: "0 20px 40px rgba(0,0,0,0.08)",
     },
 
-    // Login card (unchanged)
+    // Login card
     loginCard: {
         width: "min(440px, 100%)",
         margin: "10vh auto 0",
@@ -483,138 +515,95 @@ const styles: Record<string, React.CSSProperties> = {
     },
     secondaryButtonDisabled: { opacity: 0.6, cursor: "not-allowed" },
 
-    header: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-end",
-        gap: 16,
-        padding: "12px 0 18px",
-    },
-    title: {
-        margin: 0,
-        fontSize: 44,
-        fontWeight: 700,
-        letterSpacing: "-0.5px",
-        color: "#1f1f1f",
-    },
-    subtitle: { margin: "8px 0 0", color: "#5f5f5f", fontSize: 14 },
-
-    // ✅ NEW: Filter bar styles
-    filterBar: {
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 16,
-        marginTop: 10,
-        marginBottom: 14,
-        padding: 16,
-        borderRadius: 18,
-        background: "rgba(255,255,255,0.80)",
-        border: "1px solid rgba(0,0,0,0.06)",
-        boxShadow: "0 16px 34px rgba(0,0,0,0.08)",
-        maxWidth: 900, // keep it from spanning full width too much
-    },
-    filterLeft: { flex: 1, minWidth: 240 },
-    filterLabel: {
-        fontSize: 12,
-        letterSpacing: "0.6px",
-        fontWeight: 700,
-        color: "#4a4a4a",
-        marginBottom: 8,
-    },
-    filterInput: {
-        width: "100%",
-        padding: "12px 14px",
-        borderRadius: 16,
-        border: "1px solid rgba(0,0,0,0.10)",
-        outline: "none",
-        fontSize: 15,
-        background: "rgba(255,255,255,0.9)",
-    },
-    resultsText: {
-        marginTop: 10,
-        fontSize: 13,
-        color: "#5f5f5f",
-    },
-    resetButton: {
-        padding: "10px 14px",
-        borderRadius: 14,
-        border: "1px solid rgba(0,0,0,0.10)",
-        background: "rgba(255,255,255,0.85)",
-        fontWeight: 600,
-        cursor: "pointer",
-        height: 42,
-        alignSelf: "center",
-    },
-
-    // Grid + cards
-    grid: {
-        marginTop: 18,
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-        gap: 18,
-    },
-    card: {
-        borderRadius: 18,
-        overflow: "hidden",
-        border: "1px solid rgba(0,0,0,0.06)",
-        background: "rgba(255,255,255,0.85)",
-        boxShadow: "0 18px 40px rgba(0,0,0,0.08)",
-        cursor: "pointer",
-    },
-    imageWrap: {
-        aspectRatio: "4 / 3",
-        overflow: "hidden",
-        background: "rgba(0,0,0,0.03)",
-    },
-    image: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
-    cardBody: { padding: 14 },
-
-    // ✅ NEW: clamp description to partial view (2 lines)
-    descriptionClamped: {
-        fontSize: 14,
-        color: "#3b3b3b",
-        lineHeight: 1.45,
-        wordBreak: "break-word",
-        display: "-webkit-box",
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: "vertical",
-        overflow: "hidden",
-    },
-    voteWrap: {
-        marginTop: 10,
+    raterShell: {
+        maxWidth: 900,
+        margin: "0 auto",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 18,
     },
+    raterHeader: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 16,
+        padding: "12px 0 6px",
+    },
+    progressLabel: {
+        fontSize: 13,
+        fontWeight: 700,
+        letterSpacing: "0.4px",
+        color: "#3b3b3b",
+    },
+    subtitle: { marginTop: 6, color: "#5f5f5f", fontSize: 14 },
+
+    card: {
+        borderRadius: 22,
+        overflow: "hidden",
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.88)",
+        boxShadow: "0 22px 50px rgba(0,0,0,0.10)",
+        display: "flex",
+        flexDirection: "column",
+    },
+    imageWrap: {
+        aspectRatio: "16 / 9",
+        overflow: "hidden",
+        background: "rgba(0,0,0,0.04)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    image: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    imageMissing: {
+        padding: 24,
+        color: "#6b6b6b",
+        fontSize: 14,
+        textAlign: "center",
+    },
+    cardBody: {
+        padding: "20px 22px 22px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+    },
+    captionText: {
+        fontSize: 18,
+        lineHeight: 1.6,
+        color: "#2c2c2c",
+        wordBreak: "break-word",
+    },
+
     voteButtonsRow: {
         display: "flex",
-        gap: 10,
+        gap: 12,
         alignItems: "center",
     },
     voteButton: {
-        padding: "6px 10px",
-        borderRadius: 10,
+        padding: "8px 14px",
+        borderRadius: 12,
         border: "1px solid rgba(0,0,0,0.12)",
         background: "rgba(255,255,255,0.95)",
         cursor: "pointer",
-        fontSize: 16,
+        fontSize: 18,
         lineHeight: 1,
-        boxShadow: "0 6px 14px rgba(0,0,0,0.08)",
+        boxShadow: "0 8px 16px rgba(0,0,0,0.08)",
+        transition: "transform 120ms ease, background 140ms ease, border 140ms ease, box-shadow 140ms ease",
     },
     voteButtonActiveUp: {
-        background: "rgba(34, 197, 94, 0.18)",
-        border: "1px solid rgba(34, 197, 94, 0.35)",
+        background: "#DCFCE7",
+        border: "1px solid #86EFAC",
     },
     voteButtonActiveDown: {
-        background: "rgba(239, 68, 68, 0.16)",
-        border: "1px solid rgba(239, 68, 68, 0.35)",
+        background: "#FEE2E2",
+        border: "1px solid #FCA5A5",
     },
     voteButtonDisabled: {
-        opacity: 0.6,
+        opacity: 0.5,
         cursor: "not-allowed",
         boxShadow: "none",
     },
+
     voteConfirm: {
         fontSize: 12.5,
         color: "#1f7a3f",
@@ -634,6 +623,48 @@ const styles: Record<string, React.CSSProperties> = {
         width: "fit-content",
     },
 
+    navigationRow: {
+        display: "flex",
+        gap: 12,
+        alignItems: "center",
+    },
+    navButton: {
+        padding: "10px 16px",
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.12)",
+        background: "rgba(255,255,255,0.9)",
+        fontWeight: 600,
+        cursor: "pointer",
+    },
+    navButtonPrimary: {
+        padding: "10px 16px",
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.12)",
+        background: "#2f2f2f",
+        color: "#fff",
+        fontWeight: 600,
+        cursor: "pointer",
+    },
+    navButtonDisabled: {
+        opacity: 0.5,
+        cursor: "not-allowed",
+    },
+
+    remainingText: {
+        fontSize: 13,
+        color: "#5f5f5f",
+        marginTop: 4,
+    },
+
+    emptyCard: {
+        borderRadius: 18,
+        background: "rgba(255,255,255,0.85)",
+        border: "1px solid rgba(0,0,0,0.06)",
+        padding: "24px",
+        textAlign: "center",
+        color: "#5f5f5f",
+    },
+
     errorText: {
         marginTop: 14,
         color: "#b42318",
@@ -644,81 +675,5 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 13.5,
         lineHeight: 1.4,
         textAlign: "left",
-    },
-
-    // ✅ NEW: Modal styles
-    modalOverlay: {
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 18,
-        zIndex: 50,
-    },
-    modal: {
-        width: "min(860px, 96vw)",
-        maxHeight: "92vh",
-        overflow: "hidden",
-        borderRadius: 18,
-        background: "rgba(255,255,255,0.96)",
-        border: "1px solid rgba(0,0,0,0.10)",
-        boxShadow: "0 30px 80px rgba(0,0,0,0.25)",
-        display: "flex",
-        flexDirection: "column",
-    },
-    modalTop: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "14px 16px",
-        borderBottom: "1px solid rgba(0,0,0,0.08)",
-    },
-    modalTitle: { fontWeight: 700, color: "#222" },
-    closeButton: {
-        border: "1px solid rgba(0,0,0,0.12)",
-        background: "rgba(255,255,255,0.9)",
-        borderRadius: 12,
-        padding: "6px 10px",
-        cursor: "pointer",
-        fontWeight: 700,
-    },
-    modalImageWrap: {
-        background: "rgba(0,0,0,0.04)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 12,
-    },
-    modalImage: {
-        width: "100%",
-        height: "auto",
-        maxHeight: "52vh",
-        objectFit: "contain",
-        borderRadius: 14,
-    },
-    modalDescBox: {
-        padding: 16,
-        borderTop: "1px solid rgba(0,0,0,0.08)",
-    },
-    modalDescTitle: {
-        fontSize: 12,
-        letterSpacing: "0.6px",
-        fontWeight: 800,
-        color: "#4a4a4a",
-        marginBottom: 10,
-    },
-    modalDescScrollable: {
-        maxHeight: "18vh",
-        overflowY: "auto",
-        padding: 12,
-        borderRadius: 14,
-        border: "1px solid rgba(0,0,0,0.10)",
-        background: "rgba(255,255,255,0.9)",
-        color: "#333",
-        lineHeight: 1.6,
-        fontSize: 14,
-        whiteSpace: "pre-wrap",
     },
 };
