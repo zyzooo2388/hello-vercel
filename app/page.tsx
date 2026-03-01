@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 
 type CaptionRow = {
@@ -9,26 +9,90 @@ type CaptionRow = {
     image_id: string | null;
 };
 
+type CaptionRowWithImage = CaptionRow & {
+    image_url: string | null;
+};
+
 type ImageRow = {
     id: string;
     url: string | null;
 };
 
-type VoteFeedback = {
-    type: "success" | "error";
-    message: string;
+function hasValidImage(caption: CaptionRowWithImage | null | undefined) {
+    return !!caption?.image_url && caption.image_url.length > 0;
+}
+
+function shuffleCaptions(list: CaptionRowWithImage[]) {
+    const array = [...list];
+    for (let i = array.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+function avoidConsecutiveSameImage(list: CaptionRowWithImage[]) {
+    const array = [...list];
+    for (let i = 1; i < array.length; i += 1) {
+        const currentImageId = array[i].image_id;
+        const previousImageId = array[i - 1].image_id;
+        if (!currentImageId || !previousImageId || currentImageId !== previousImageId) continue;
+
+        let swapIndex = -1;
+        for (let j = i + 1; j < array.length; j += 1) {
+            if (array[j].image_id && array[j].image_id !== previousImageId) {
+                swapIndex = j;
+                break;
+            }
+        }
+
+        if (swapIndex !== -1) {
+            [array[i], array[swapIndex]] = [array[swapIndex], array[i]];
+        }
+    }
+    return array;
+}
+
+type StoredQueue = {
+    queue: CaptionRowWithImage[];
 };
+
+const STORAGE_PREFIX = "voteQueue:";
+
+function getStorageKey(userId: string) {
+    return `${STORAGE_PREFIX}${userId}`;
+}
+
+function readStoredQueue(userId: string): StoredQueue | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const raw = sessionStorage.getItem(getStorageKey(userId));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as StoredQueue;
+        if (!parsed || !Array.isArray(parsed.queue)) {
+            return null;
+        }
+        return { queue: parsed.queue };
+    } catch {
+        return null;
+    }
+}
+
+function persistQueue(userId: string, queue: CaptionRowWithImage[]) {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem(getStorageKey(userId), JSON.stringify({ queue }));
+}
 
 function VoteButtons({
     onVote,
     disabled,
     submitting,
-    currentVote,
+    selectedVote,
 }: {
     onVote: (value: 1 | -1) => void;
     disabled: boolean;
     submitting: boolean;
-    currentVote?: 1 | -1 | 0 | null;
+    selectedVote?: 1 | -1 | null;
 }) {
     const isDisabled = disabled || submitting;
 
@@ -36,50 +100,64 @@ function VoteButtons({
         <div style={styles.voteButtonsRow}>
             <button
                 type="button"
-                onClick={() => onVote(1)}
+                onClick={() => onVote(-1)}
                 disabled={isDisabled}
-                aria-label="Upvote caption"
+                aria-label="Not willing"
+                aria-pressed={selectedVote === -1}
+                className="vote-button"
                 style={{
                     ...styles.voteButton,
-                    ...(currentVote === 1 ? styles.voteButtonActiveUp : {}),
                     ...(isDisabled ? styles.voteButtonDisabled : {}),
                 }}
             >
-                👍
+                😵
             </button>
             <button
                 type="button"
-                onClick={() => onVote(-1)}
+                onClick={() => onVote(1)}
                 disabled={isDisabled}
-                aria-label="Downvote caption"
+                aria-label="Love"
+                aria-pressed={selectedVote === 1}
+                className="vote-button"
                 style={{
                     ...styles.voteButton,
-                    ...(currentVote === -1 ? styles.voteButtonActiveDown : {}),
                     ...(isDisabled ? styles.voteButtonDisabled : {}),
                 }}
             >
-                👎
+                🧡
             </button>
+            <style jsx>{`
+                .vote-button:hover:not(:disabled) {
+                    transform: scale(1.06);
+                }
+            `}</style>
         </div>
     );
 }
 
 export default function HomePage() {
     const supabase = useMemo(() => createClient(), []);
+    const didInitRef = useRef(false);
 
     const [loading, setLoading] = useState(true);
     const [authLoading, setAuthLoading] = useState(false);
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [userId, setUserId] = useState<string | null>(null);
-    const [captions, setCaptions] = useState<CaptionRow[]>([]);
-    const [imagesById, setImagesById] = useState<Record<string, string>>({});
+    const [queue, setQueue] = useState<CaptionRowWithImage[]>([]);
+    const [totalCount, setTotalCount] = useState(0);
+    const [doneCount, setDoneCount] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [votingByCaptionId, setVotingByCaptionId] = useState<Record<string, boolean>>({});
     const [voteByCaptionId, setVoteByCaptionId] = useState<Record<string, 1 | -1 | 0 | null>>({});
-    const [voteFeedback, setVoteFeedback] = useState<VoteFeedback | null>(null);
-    const [currentIndex, setCurrentIndex] = useState(0);
+    const [voteStatus, setVoteStatus] = useState<"success" | "error" | null>(null);
+    const [voteError, setVoteError] = useState<string | null>(null);
+    const [selectedVote, setSelectedVote] = useState<1 | -1 | null>(null);
+    const [animDir, setAnimDir] = useState<"left" | "right" | null>(null);
+    const [animAngle, setAnimAngle] = useState(0);
+    const [animState, setAnimState] = useState<"idle" | "out" | "in-start" | "in">("idle");
+    const [isAnimating, setIsAnimating] = useState(false);
 
-    async function load() {
+    async function load({ force }: { force?: boolean } = {}) {
         setLoading(true);
         setError(null);
 
@@ -89,16 +167,44 @@ export default function HomePage() {
         if (!session) {
             setUserEmail(null);
             setUserId(null);
-            setCaptions([]);
-            setImagesById({});
+            setQueue([]);
+            setTotalCount(0);
+            setDoneCount(0);
             setVoteByCaptionId({});
-            setCurrentIndex(0);
             setLoading(false);
             return;
         }
 
         setUserEmail(session.user.email ?? "Logged in");
         setUserId(session.user.id);
+
+        if (!force) {
+            const stored = readStoredQueue(session.user.id);
+            if (stored) {
+                setQueue(stored.queue);
+            }
+        }
+
+        const [
+            { count: totalCountDb, error: totalCountError },
+            { count: doneCountDb, error: doneCountError },
+        ] = await Promise.all([
+            supabase.from("captions").select("id", { count: "exact", head: true }),
+            supabase
+                .from("caption_votes")
+                .select("id", { count: "exact", head: true })
+                .eq("profile_id", session.user.id),
+        ]);
+
+        if (totalCountError || doneCountError) {
+            setError(totalCountError?.message ?? doneCountError?.message ?? "Unable to load counts.");
+            setQueue([]);
+            setTotalCount(0);
+            setDoneCount(0);
+            setVoteByCaptionId({});
+            setLoading(false);
+            return;
+        }
 
         let captionsData: CaptionRow[] = [];
         const { data: createdOrder, error: createdOrderError } = await supabase
@@ -114,8 +220,8 @@ export default function HomePage() {
 
             if (fallbackError) {
                 setError(fallbackError.message);
-                setCaptions([]);
-                setImagesById({});
+                setQueue([]);
+                setTotalCount(0);
                 setVoteByCaptionId({});
                 setLoading(false);
                 return;
@@ -132,8 +238,9 @@ export default function HomePage() {
 
         if (imagesError) {
             setError(imagesError.message);
-            setCaptions([]);
-            setImagesById({});
+            setQueue([]);
+            setTotalCount(0);
+            setDoneCount(0);
             setVoteByCaptionId({});
             setLoading(false);
             return;
@@ -151,8 +258,9 @@ export default function HomePage() {
 
         if (votesError) {
             setError(votesError.message);
-            setCaptions([]);
-            setImagesById({});
+            setQueue([]);
+            setTotalCount(0);
+            setDoneCount(0);
             setVoteByCaptionId({});
             setLoading(false);
             return;
@@ -165,21 +273,30 @@ export default function HomePage() {
             }
         });
 
-        setCaptions(captionsData);
-        setImagesById(imageMap);
-        setVoteByCaptionId(voteMap);
+        const captionsWithImages = captionsData.map((caption) => ({
+            ...caption,
+            image_url: caption.image_id ? imageMap[caption.image_id] ?? null : null,
+        }));
+        const validCaptions = captionsWithImages.filter((caption) => hasValidImage(caption));
+        const eligibleCaptions = validCaptions.filter((caption) => voteMap[caption.id] == null);
+        const shuffledCaptions = avoidConsecutiveSameImage(shuffleCaptions(eligibleCaptions));
 
-        const firstUnvotedIndex = captionsData.findIndex((caption) => !voteMap[caption.id]);
-        setCurrentIndex(firstUnvotedIndex === -1 ? 0 : firstUnvotedIndex);
+        setQueue(shuffledCaptions);
+        setTotalCount(validCaptions.length || totalCountDb || 0);
+        setDoneCount(doneCountDb ?? 0);
+        setVoteByCaptionId(voteMap);
+        persistQueue(session.user.id, shuffledCaptions);
 
         setLoading(false);
     }
 
     useEffect(() => {
+        if (didInitRef.current) return;
+        didInitRef.current = true;
         load();
 
         const { data: sub } = supabase.auth.onAuthStateChange(() => {
-            load();
+            load({ force: true });
         });
 
         return () => sub.subscription.unsubscribe();
@@ -207,15 +324,62 @@ export default function HomePage() {
         setAuthLoading(false);
     }
 
+    function randomAngle(dir: "left" | "right") {
+        const magnitude = 6 + Math.random() * 10;
+        return dir === "right" ? magnitude : -magnitude;
+    }
+
+    async function animateAndAdvance(dir: "left" | "right") {
+        if (isAnimating) return;
+        setIsAnimating(true);
+        setAnimDir(dir);
+        setAnimAngle(randomAngle(dir));
+        setAnimState("out");
+
+        await new Promise((resolve) => setTimeout(resolve, 280));
+        const hasNext = queue.length > 1;
+        setQueue((prev) => {
+            const nextQueue = prev.slice(1);
+            if (userId) persistQueue(userId, nextQueue);
+            return nextQueue;
+        });
+
+        if (!hasNext) {
+            setAnimState("idle");
+            setAnimDir(null);
+            setIsAnimating(false);
+            return;
+        }
+
+        const enterDir = dir === "right" ? "left" : "right";
+        setAnimDir(enterDir);
+        setAnimAngle(randomAngle(enterDir));
+        setAnimState("in-start");
+
+        await new Promise((resolve) =>
+            requestAnimationFrame(() => {
+                resolve(true);
+            }),
+        );
+        setAnimState("in");
+
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        setAnimState("idle");
+        setAnimDir(null);
+        setIsAnimating(false);
+    }
+
     async function handleVote(captionId: string, value: 1 | -1) {
         if (!userId) {
-            setVoteFeedback({ type: "error", message: "Please sign in to vote." });
+            setVoteStatus("error");
+            setVoteError("Please sign in to vote.");
             return;
         }
 
         if (votingByCaptionId[captionId]) return;
         setVotingByCaptionId((prev) => ({ ...prev, [captionId]: true }));
-        setVoteFeedback(null);
+        setVoteStatus(null);
+        setVoteError(null);
 
         const now = new Date().toISOString();
         const hasExistingVote = voteByCaptionId[captionId] != null;
@@ -242,29 +406,42 @@ export default function HomePage() {
 
         if (error) {
             console.error("Vote error:", error);
-            setVoteFeedback({ type: "error", message: "Unable to record vote. Please try again." });
+            setVoteStatus("error");
+            setVoteError("Unable to record vote. Please try again.");
             setVotingByCaptionId((prev) => ({ ...prev, [captionId]: false }));
             return;
         }
 
         setVoteByCaptionId((prev) => ({ ...prev, [captionId]: value }));
-        setVoteFeedback({ type: "success", message: "Vote recorded." });
+        if (!hasExistingVote) {
+            setDoneCount((prev) => prev + 1);
+        }
+        setVoteStatus("success");
+        setVoteError(null);
         setVotingByCaptionId((prev) => ({ ...prev, [captionId]: false }));
+        await animateAndAdvance(value === 1 ? "right" : "left");
     }
 
+    const currentCaption = queue[0];
+    const currentCaptionId = currentCaption?.id ?? null;
+
     useEffect(() => {
-        function onKeyDown(e: KeyboardEvent) {
-            if (e.key === "ArrowLeft") {
-                setCurrentIndex((prev) => Math.max(0, prev - 1));
-            }
-            if (e.key === "ArrowRight") {
-                setCurrentIndex((prev) => Math.min(captions.length - 1, prev + 1));
-            }
+        setSelectedVote(null);
+        setVoteStatus(null);
+        setVoteError(null);
+
+        if (!currentCaptionId) {
+            return;
         }
 
-        window.addEventListener("keydown", onKeyDown);
-        return () => window.removeEventListener("keydown", onKeyDown);
-    }, [captions.length]);
+        const existingVote = voteByCaptionId[currentCaptionId];
+        if (existingVote === 1 || existingVote === -1) {
+            setSelectedVote(existingVote);
+        } else {
+            setSelectedVote(null);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentCaptionId]);
 
     if (loading) {
         return (
@@ -303,15 +480,14 @@ export default function HomePage() {
         );
     }
 
-    const total = captions.length;
-    const currentCaption = captions[currentIndex];
-    const currentVote = currentCaption?.id ? voteByCaptionId[currentCaption.id] : null;
-    const hasVoteForCurrent = currentCaption?.id ? voteByCaptionId[currentCaption.id] != null : false;
-    const votedCount = captions.reduce((count, caption) => {
-        if (voteByCaptionId[caption.id] != null) return count + 1;
-        return count;
-    }, 0);
-    const remaining = Math.max(0, total - votedCount);
+    const remaining = Math.max(totalCount - doneCount, 0);
+    const total = totalCount;
+    const headerText =
+        total === 0
+            ? "CAPTION 0 / 0"
+            : remaining === 0
+              ? `DONE / ${total}`
+              : `CAPTION ${doneCount + 1} / ${total}`;
 
     return (
         <div style={styles.page}>
@@ -319,9 +495,7 @@ export default function HomePage() {
                 <header style={styles.raterHeader}>
                     <div>
                         <div style={styles.progressLabel}>
-                            {total === 0
-                                ? "CAPTION 0 / 0"
-                                : `CAPTION ${currentIndex + 1} / ${total}`}
+                            {headerText}
                         </div>
                         <div style={styles.subtitle}>Signed in as {userEmail}</div>
                     </div>
@@ -340,21 +514,33 @@ export default function HomePage() {
 
                 {error && <p style={{ ...styles.errorText, marginTop: 8 }}>{error}</p>}
 
-                {total === 0 ? (
-                    <div style={styles.emptyCard}>No captions available.</div>
+                {remaining === 0 ? (
+                    <div style={styles.emptyCard}>All done. Thanks for voting!</div>
                 ) : (
-                    <div style={styles.card}>
+                    <div
+                        key={currentCaption?.id}
+                        style={{
+                            ...styles.card,
+                            transform:
+                                animState === "out" || animState === "in-start"
+                                    ? `translateX(${animDir === "left" ? "-120%" : "120%"}) rotate(${animAngle}deg)`
+                                    : "translateX(0) rotate(0deg)",
+                            opacity: animState === "out" || animState === "in-start" ? 0 : 1,
+                            transition:
+                                animState === "out"
+                                    ? "transform 280ms ease, opacity 280ms ease"
+                                    : animState === "in"
+                                      ? "transform 260ms ease, opacity 260ms ease"
+                                      : "none",
+                        }}
+                    >
                         <div style={styles.imageWrap}>
-                            {currentCaption?.image_id && imagesById[currentCaption.image_id] ? (
+                            {hasValidImage(currentCaption) && (
                                 <img
-                                    src={imagesById[currentCaption.image_id]}
-                                    alt={currentCaption.content ?? ""}
+                                    src={currentCaption.image_url ?? ""}
+                                    alt={currentCaption?.content ?? ""}
                                     style={styles.image}
                                 />
-                            ) : (
-                                <div style={styles.imageMissing}>
-                                    No image row for this image_id
-                                </div>
                             )}
                         </div>
 
@@ -365,51 +551,22 @@ export default function HomePage() {
 
                             <VoteButtons
                                 onVote={(value) => currentCaption?.id && handleVote(currentCaption.id, value)}
-                                disabled={!userId || !currentCaption?.id}
+                                disabled={!userId || !currentCaption?.id || isAnimating}
                                 submitting={currentCaption?.id ? !!votingByCaptionId[currentCaption.id] : false}
-                                currentVote={currentVote}
+                                selectedVote={selectedVote}
                             />
 
-                            {voteFeedback && (
+                            {voteStatus && (
                                 <div
                                     style={
-                                        voteFeedback.type === "success"
+                                        voteStatus === "success"
                                             ? styles.voteConfirm
                                             : styles.voteError
                                     }
                                 >
-                                    {voteFeedback.message}
+                                    {voteStatus === "success" ? "Vote recorded." : voteError}
                                 </div>
                             )}
-
-                            <div style={styles.navigationRow}>
-                                <button
-                                    type="button"
-                                    onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
-                                    disabled={currentIndex === 0}
-                                    style={{
-                                        ...styles.navButton,
-                                        ...(currentIndex === 0 ? styles.navButtonDisabled : {}),
-                                    }}
-                                >
-                                    Prev
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setCurrentIndex((prev) => Math.min(total - 1, prev + 1))
-                                    }
-                                    disabled={!hasVoteForCurrent || currentIndex === total - 1}
-                                    style={{
-                                        ...styles.navButtonPrimary,
-                                        ...(!hasVoteForCurrent || currentIndex === total - 1
-                                            ? styles.navButtonDisabled
-                                            : {}),
-                                    }}
-                                >
-                                    Next
-                                </button>
-                            </div>
 
                             <div style={styles.remainingText}>
                                 {remaining} captions left to vote
@@ -547,14 +704,14 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
     },
     imageWrap: {
-        aspectRatio: "16 / 9",
+        height: "min(52vh, 520px)",
         overflow: "hidden",
         background: "rgba(0,0,0,0.04)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
     },
-    image: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    image: { width: "100%", height: "100%", objectFit: "contain", display: "block" },
     imageMissing: {
         padding: 24,
         color: "#6b6b6b",
@@ -576,27 +733,20 @@ const styles: Record<string, React.CSSProperties> = {
 
     voteButtonsRow: {
         display: "flex",
-        gap: 12,
+        justifyContent: "center",
         alignItems: "center",
+        gap: 12,
+        width: "100%",
     },
     voteButton: {
         padding: "8px 14px",
-        borderRadius: 12,
-        border: "1px solid rgba(0,0,0,0.12)",
-        background: "rgba(255,255,255,0.95)",
+        borderRadius: 14,
+        border: "1px solid #ddd",
+        background: "#fff",
         cursor: "pointer",
-        fontSize: 18,
+        fontSize: 30,
         lineHeight: 1,
-        boxShadow: "0 8px 16px rgba(0,0,0,0.08)",
-        transition: "transform 120ms ease, background 140ms ease, border 140ms ease, box-shadow 140ms ease",
-    },
-    voteButtonActiveUp: {
-        background: "#DCFCE7",
-        border: "1px solid #86EFAC",
-    },
-    voteButtonActiveDown: {
-        background: "#FEE2E2",
-        border: "1px solid #FCA5A5",
+        transition: "transform 140ms ease",
     },
     voteButtonDisabled: {
         opacity: 0.5,
@@ -621,33 +771,6 @@ const styles: Record<string, React.CSSProperties> = {
         padding: "6px 8px",
         borderRadius: 10,
         width: "fit-content",
-    },
-
-    navigationRow: {
-        display: "flex",
-        gap: 12,
-        alignItems: "center",
-    },
-    navButton: {
-        padding: "10px 16px",
-        borderRadius: 12,
-        border: "1px solid rgba(0,0,0,0.12)",
-        background: "rgba(255,255,255,0.9)",
-        fontWeight: 600,
-        cursor: "pointer",
-    },
-    navButtonPrimary: {
-        padding: "10px 16px",
-        borderRadius: 12,
-        border: "1px solid rgba(0,0,0,0.12)",
-        background: "#2f2f2f",
-        color: "#fff",
-        fontWeight: 600,
-        cursor: "pointer",
-    },
-    navButtonDisabled: {
-        opacity: 0.5,
-        cursor: "not-allowed",
     },
 
     remainingText: {
