@@ -263,23 +263,23 @@ export default function UploadPage() {
 
                 receivedArrayResponse = receivedArrayResponse || Array.isArray(data);
                 returnedCaptions = Array.isArray(data)
-                    ? data
-                          .map((item) => {
-                              if (!item || typeof item !== "object") return null;
-                              const record = item as Partial<CaptionRecord> & {
-                                  caption?: string;
-                                  text?: string;
-                              };
-                              const content =
-                                  typeof record.content === "string"
-                                      ? record.content
-                                      : typeof record.caption === "string"
-                                      ? record.caption
-                                      : typeof record.text === "string"
-                                      ? record.text
-                                      : "";
-                              if (!content) return null;
-                              return {
+                    ? data.flatMap((item) => {
+                          if (!item || typeof item !== "object") return [];
+                          const record = item as Partial<CaptionRecord> & {
+                              caption?: string;
+                              text?: string;
+                          };
+                          const content =
+                              typeof record.content === "string"
+                                  ? record.content
+                                  : typeof record.caption === "string"
+                                  ? record.caption
+                                  : typeof record.text === "string"
+                                  ? record.text
+                                  : "";
+                          if (!content) return [];
+                          return [
+                              {
                                   id: typeof record.id === "string" ? record.id : "",
                                   content,
                                   image_id:
@@ -288,9 +288,9 @@ export default function UploadPage() {
                                       typeof record.created_datetime_utc === "string"
                                           ? record.created_datetime_utc
                                           : record.created_datetime_utc ?? null,
-                              };
-                          })
-                          .filter((item): item is CaptionRecord => item !== null)
+                              },
+                          ];
+                      })
                     : [];
 
                 log(
