@@ -231,8 +231,8 @@ function VoteButtons({
     disabled: boolean;
     submitting: boolean;
     selectedVote?: 1 | -1 | null;
-    dislikeButtonRef: React.RefObject<HTMLButtonElement>;
-    likeButtonRef: React.RefObject<HTMLButtonElement>;
+    dislikeButtonRef: React.RefObject<HTMLButtonElement | null>;
+    likeButtonRef: React.RefObject<HTMLButtonElement | null>;
 }) {
     const isDisabled = disabled || submitting;
 
