@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
 import "./globals.css";
+import AuthNav from "./components/AuthNav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,47 +28,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <header style={styles.navShell}>
-          <nav style={styles.nav}>
-            <Link href="/" style={styles.navLink}>
-              Vote
-            </Link>
-            <Link href="/upload" style={styles.navLink}>
-              Upload
-            </Link>
-          </nav>
-        </header>
+        <AuthNav />
         {children}
       </body>
     </html>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  navShell: {
-    position: "sticky",
-    top: 0,
-    zIndex: 20,
-    background: "rgba(255,255,255,0.85)",
-    borderBottom: "1px solid rgba(0,0,0,0.06)",
-    backdropFilter: "blur(10px)",
-  },
-  nav: {
-    maxWidth: 960,
-    margin: "0 auto",
-    padding: "12px 20px",
-    display: "flex",
-    gap: 16,
-    alignItems: "center",
-  },
-  navLink: {
-    textDecoration: "none",
-    fontSize: 14,
-    fontWeight: 600,
-    color: "#2c2c2c",
-    padding: "6px 10px",
-    borderRadius: 10,
-    border: "1px solid rgba(0,0,0,0.08)",
-    background: "rgba(255,255,255,0.7)",
-  },
-};

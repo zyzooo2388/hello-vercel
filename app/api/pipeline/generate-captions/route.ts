@@ -1,15 +1,8 @@
+import { createClient } from "@/lib/supabase/server";
+
 type GenerateCaptionsBody = {
     imageId?: string;
-    accessToken?: string;
 };
-
-function extractToken(request: Request, body: GenerateCaptionsBody | null) {
-    const authHeader = request.headers.get("authorization") ?? "";
-    if (authHeader.toLowerCase().startsWith("bearer ")) {
-        return authHeader.slice(7).trim();
-    }
-    return body?.accessToken?.trim();
-}
 
 export async function POST(request: Request) {
     let body: GenerateCaptionsBody | null = null;
@@ -20,7 +13,17 @@ export async function POST(request: Request) {
         return new Response("Invalid JSON body.", { status: 400 });
     }
 
-    const token = extractToken(request, body);
+    const supabase = await createClient();
+    const {
+        data: { session },
+        error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+        console.error("[pipeline/generate-captions] Session error.", sessionError);
+    }
+
+    const token = session?.access_token;
     if (!token) {
         return new Response("Missing access token.", { status: 401 });
     }
