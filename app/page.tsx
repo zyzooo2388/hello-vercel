@@ -878,24 +878,20 @@ export default function HomePage() {
         setVoteStatus(null);
         setVoteError(null);
 
-        const now = new Date().toISOString();
         const hasExistingVote = voteByCaptionId[captionId] != null;
         const payload: {
             profile_id: string;
             caption_id: string;
             vote_value: 1 | -1;
-            created_datetime_utc: string;
-            modified_datetime_utc?: string;
+            created_by_user_id: string;
+            modified_by_user_id: string;
         } = {
             profile_id: userId,
             caption_id: captionId,
             vote_value: value,
-            created_datetime_utc: now,
+            created_by_user_id: userId,
+            modified_by_user_id: userId,
         };
-
-        if (hasExistingVote) {
-            payload.modified_datetime_utc = now;
-        }
 
         const { error } = await supabase
             .from("caption_votes")
