@@ -757,6 +757,8 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 15,
         fontWeight: 600,
         color: "#2f2b27",
+        textAlign: "center",
+        wordBreak: "break-word",
     },
     copyButton: {
         width: "fit-content",

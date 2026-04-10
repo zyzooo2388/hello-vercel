@@ -271,6 +271,7 @@ function VoteButtons({
     disabled,
     submitting,
     selectedVote,
+    voteStatus,
     dislikeButtonRef,
     likeButtonRef,
 }: {
@@ -278,6 +279,7 @@ function VoteButtons({
     disabled: boolean;
     submitting: boolean;
     selectedVote?: 1 | -1 | null;
+    voteStatus?: "success" | "error" | null;
     dislikeButtonRef: React.RefObject<HTMLButtonElement | null>;
     likeButtonRef: React.RefObject<HTMLButtonElement | null>;
 }) {
@@ -285,41 +287,66 @@ function VoteButtons({
 
     return (
         <div style={styles.voteButtonsRow}>
-            <button
-                type="button"
-                onClick={() => onVote(-1)}
-                disabled={isDisabled}
-                aria-label="Not willing"
-                aria-pressed={selectedVote === -1}
-                className="vote-button"
-                ref={dislikeButtonRef}
-                style={{
-                    ...styles.voteButton,
-                    ...(isDisabled ? styles.voteButtonDisabled : {}),
-                }}
-            >
-                😵
-            </button>
-            <button
-                type="button"
-                onClick={() => onVote(1)}
-                disabled={isDisabled}
-                aria-label="Love"
-                aria-pressed={selectedVote === 1}
-                className="vote-button"
-                ref={likeButtonRef}
-                style={{
-                    ...styles.voteButton,
-                    ...(isDisabled ? styles.voteButtonDisabled : {}),
-                }}
-            >
-                🧡
-            </button>
-            <style jsx>{`
-                .vote-button:hover:not(:disabled) {
-                    transform: scale(1.06);
-                }
-            `}</style>
+            <div style={styles.voteButtonGroup}>
+                <button
+                    type="button"
+                    onClick={() => onVote(-1)}
+                    disabled={isDisabled}
+                    aria-label="Not funny"
+                    aria-pressed={selectedVote === -1}
+                    title="Not Funny"
+                    className={[
+                        "vote-button",
+                        "transition-all duration-200 hover:scale-[1.04] active:scale-[0.96]",
+                        selectedVote === -1 ? "is-selected is-dislike" : "",
+                        selectedVote === -1 ? "is-feedback" : "",
+                        submitting ? "is-submitting scale-[0.98]" : "",
+                        voteStatus === "success" && selectedVote === -1
+                            ? "is-confirmed"
+                            : "",
+                    ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    ref={dislikeButtonRef}
+                    style={{
+                        ...styles.voteButton,
+                        ...(isDisabled ? styles.voteButtonDisabled : {}),
+                    }}
+                >
+                    😵
+                </button>
+                <span style={styles.voteButtonLabel}>Not Funny</span>
+            </div>
+            <div style={styles.voteButtonGroup}>
+                <button
+                    type="button"
+                    onClick={() => onVote(1)}
+                    disabled={isDisabled}
+                    aria-label="Funny"
+                    aria-pressed={selectedVote === 1}
+                    title="Funny"
+                    className={[
+                        "vote-button",
+                        "transition-all duration-200 hover:scale-[1.04] active:scale-[0.96]",
+                        selectedVote === 1 ? "is-selected is-like" : "",
+                        selectedVote === 1 ? "is-feedback" : "",
+                        submitting ? "is-submitting scale-[0.98]" : "",
+                        voteStatus === "success" && selectedVote === 1
+                            ? "is-confirmed"
+                            : "",
+                    ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    ref={likeButtonRef}
+                    style={{
+                        ...styles.voteButton,
+                        ...(isDisabled ? styles.voteButtonDisabled : {}),
+                    }}
+                >
+                    🧡
+                </button>
+                <span style={styles.voteButtonLabel}>Funny</span>
+            </div>
         </div>
     );
 }
@@ -384,8 +411,11 @@ export default function HomePage() {
     const [selectedVote, setSelectedVote] = useState<1 | -1 | null>(null);
     const [animDir, setAnimDir] = useState<"left" | "right" | null>(null);
     const [animAngle, setAnimAngle] = useState(0);
-    const [animState, setAnimState] = useState<"idle" | "out" | "in-start" | "in">("idle");
+    const [animState, setAnimState] = useState<"idle" | "out" | "in-start" | "in">(
+        "idle",
+    );
     const [isAnimating, setIsAnimating] = useState(false);
+    const [isTransitioning, setIsTransitioning] = useState(false);
     const [reactions, setReactions] = useState<ReactionBurst[]>([]);
     const [isShaking, setIsShaking] = useState(false);
     const [leaderboardOpen, setLeaderboardOpen] = useState(false);
@@ -856,6 +886,7 @@ export default function HomePage() {
     const likeEmojis = ["❤️", "💕", "💖", "💗"];
     const dislikeEmojis = ["💔", "😵", "👎", "💥"];
     const DEFAULT_PARTICLE_COUNT = 8;
+    const VOTE_FEEDBACK_DELAY_MS = 600;
 
     function randomInRange(min: number, max: number) {
         return min + Math.random() * (max - min);
@@ -966,6 +997,8 @@ export default function HomePage() {
         setVotingByCaptionId((prev) => ({ ...prev, [captionId]: true }));
         setVoteStatus(null);
         setVoteError(null);
+        setSelectedVote(value);
+        setIsTransitioning(true);
 
         const hasExistingVote = voteByCaptionId[captionId] != null;
         const payload: {
@@ -991,6 +1024,8 @@ export default function HomePage() {
             setVoteStatus("error");
             setVoteError("Unable to record vote. Please try again.");
             setVotingByCaptionId((prev) => ({ ...prev, [captionId]: false }));
+            setSelectedVote(null);
+            setIsTransitioning(false);
             return;
         }
 
@@ -1001,7 +1036,9 @@ export default function HomePage() {
         setVoteStatus("success");
         setVoteError(null);
         setVotingByCaptionId((prev) => ({ ...prev, [captionId]: false }));
+        await new Promise((resolve) => setTimeout(resolve, VOTE_FEEDBACK_DELAY_MS));
         await animateAndAdvance(value === 1 ? "right" : "left");
+        setIsTransitioning(false);
     }
 
     const currentCaption = queue[0];
@@ -1071,6 +1108,14 @@ export default function HomePage() {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentCaptionId]);
+
+    useEffect(() => {
+        if (voteStatus !== "success") return;
+        const timeoutId = window.setTimeout(() => {
+            setVoteStatus(null);
+        }, 1200);
+        return () => window.clearTimeout(timeoutId);
+    }, [voteStatus]);
 
     // Auth gate: block vote UI until the session is ready and authenticated.
     if (!authReady) {
@@ -1151,15 +1196,20 @@ export default function HomePage() {
                             ...styles.card,
                             transform:
                                 animState === "out" || animState === "in-start"
-                                    ? `translateX(${animDir === "left" ? "-120%" : "120%"}) rotate(${animAngle}deg)`
-                                    : "translateX(0) rotate(0deg)",
-                            opacity: animState === "out" || animState === "in-start" ? 0 : 1,
+                                    ? `translateX(${animDir === "left" ? "-120%" : "120%"}) rotate(${animAngle}deg) scale(${isTransitioning ? 0.99 : 1})`
+                                    : `translateX(0) rotate(0deg) scale(${isTransitioning ? 0.99 : 1})`,
+                            opacity:
+                                animState === "out" || animState === "in-start"
+                                    ? 0
+                                    : isTransitioning
+                                      ? 0.96
+                                      : 1,
                             transition:
                                 animState === "out"
                                     ? "transform 280ms ease, opacity 280ms ease"
                                     : animState === "in"
                                       ? "transform 260ms ease, opacity 260ms ease"
-                                      : "none",
+                                      : "transform 360ms ease, opacity 360ms ease",
                         }}
                     >
                         <div style={styles.reactionOverlay} aria-hidden="true">
@@ -1207,8 +1257,10 @@ export default function HomePage() {
                                 ...(isShaking ? styles.cardBodyShaking : {}),
                             }}
                         >
-                            <div style={styles.captionText}>
-                                {currentCaption?.content ?? "(no caption)"}
+                            <div style={styles.captionBlock}>
+                                <div style={styles.captionText}>
+                                    {currentCaption?.content ?? "(no caption)"}
+                                </div>
                             </div>
 
                             <div style={styles.voteHeaderRow}>
@@ -1242,13 +1294,19 @@ export default function HomePage() {
                                         }
                                         void handleVote(currentCaption.id, value);
                                     }}
-                                    disabled={!userId || !currentCaption?.id || isAnimating}
+                                    disabled={
+                                        !userId ||
+                                        !currentCaption?.id ||
+                                        isAnimating ||
+                                        isTransitioning
+                                    }
                                     submitting={
                                         currentCaption?.id
                                             ? !!votingByCaptionId[currentCaption.id]
                                             : false
                                     }
                                     selectedVote={selectedVote}
+                                    voteStatus={voteStatus}
                                     dislikeButtonRef={dislikeButtonRef}
                                     likeButtonRef={likeButtonRef}
                                 />
@@ -1265,8 +1323,6 @@ export default function HomePage() {
                                     {voteStatus === "success" ? "Vote recorded." : voteError}
                                 </div>
                             )}
-
-
                             <div style={styles.remainingText}>
                                 {remaining} captions left to vote
                             </div>
@@ -1383,6 +1439,88 @@ export default function HomePage() {
             )}
 
             <style jsx>{`
+                .vote-button {
+                    position: relative;
+                }
+                .vote-button:hover:not(:disabled) {
+                    box-shadow: 0 12px 20px rgba(0, 0, 0, 0.12);
+                    border-color: rgba(0, 0, 0, 0.18);
+                }
+                .vote-button:active:not(:disabled) {
+                    box-shadow: 0 8px 14px rgba(0, 0, 0, 0.12);
+                }
+                .vote-button.is-selected {
+                    background: rgba(255, 244, 239, 0.9);
+                    border-color: rgba(210, 150, 120, 0.7);
+                    box-shadow: 0 14px 26px rgba(200, 120, 90, 0.18);
+                }
+                .vote-button.is-selected.is-like {
+                    background: rgba(255, 232, 236, 0.92);
+                    border-color: rgba(214, 78, 96, 0.5);
+                    box-shadow: 0 14px 26px rgba(214, 78, 96, 0.2);
+                }
+                .vote-button.is-selected.is-dislike {
+                    background: rgba(242, 242, 242, 0.92);
+                    border-color: rgba(60, 60, 60, 0.25);
+                    box-shadow: 0 14px 26px rgba(0, 0, 0, 0.16);
+                }
+                .vote-button.is-feedback {
+                    animation: buttonPress 420ms ease-out;
+                }
+                .vote-button.is-confirmed::after {
+                    content: "";
+                    position: absolute;
+                    inset: -6px;
+                    border-radius: 18px;
+                    border: 1px solid rgba(34, 197, 94, 0.35);
+                    opacity: 0;
+                    animation: confirmPulse 520ms ease-out;
+                }
+                @keyframes confirmPulse {
+                    0% {
+                        opacity: 0;
+                        transform: scale(0.96);
+                    }
+                    40% {
+                        opacity: 1;
+                        transform: scale(1.02);
+                    }
+                    100% {
+                        opacity: 0;
+                        transform: scale(1.06);
+                    }
+                }
+                @keyframes buttonPress {
+                    0% {
+                        transform: scale(1);
+                    }
+                    40% {
+                        transform: scale(0.96);
+                    }
+                    100% {
+                        transform: scale(1);
+                    }
+                }
+
+                @keyframes voteStatusFade {
+                    0% {
+                        opacity: 0;
+                        transform: translateY(6px);
+                    }
+                    20% {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                    80% {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                    100% {
+                        opacity: 0;
+                        transform: translateY(-4px);
+                    }
+                }
+
                 @keyframes reactionBurst {
                     0% {
                         opacity: 1;
@@ -1633,12 +1771,19 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 12,
     },
     progressLabel: {
-        fontSize: 13,
-        fontWeight: 700,
-        letterSpacing: "0.4px",
-        color: "#3b3b3b",
+        fontSize: 12,
+        fontWeight: 750,
+        letterSpacing: "0.6px",
+        color: "#2f2f2f",
+        textTransform: "uppercase",
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        background: "rgba(255,255,255,0.8)",
+        border: "1px solid rgba(0,0,0,0.08)",
     },
-    subtitle: { marginTop: 6, color: "#5f5f5f", fontSize: 14 },
+    subtitle: { marginTop: 8, color: "#6b6b6b", fontSize: 13 },
 
     card: {
         borderRadius: 22,
@@ -1651,15 +1796,23 @@ const styles: Record<string, React.CSSProperties> = {
         position: "relative",
     },
     imageWrap: {
-        height: "min(52vh, 520px)",
+        height: "min(46vh, 460px)",
         overflow: "hidden",
-        background: "rgba(0,0,0,0.04)",
+        background: "rgba(0,0,0,0.03)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         position: "relative",
+        padding: "18px 22px 16px",
     },
-    image: { width: "100%", height: "100%", objectFit: "contain", display: "block" },
+    image: {
+        width: "100%",
+        height: "100%",
+        maxWidth: "100%",
+        maxHeight: "100%",
+        objectFit: "contain",
+        display: "block",
+    },
     imageMissing: {
         padding: 24,
         color: "#6b6b6b",
@@ -1667,27 +1820,44 @@ const styles: Record<string, React.CSSProperties> = {
         textAlign: "center",
     },
     cardBody: {
-        padding: "20px 22px 22px",
+        padding: "26px 26px 24px",
         display: "flex",
         flexDirection: "column",
-        gap: 16,
+        gap: 18,
+        minHeight: "clamp(260px, 32vh, 360px)",
     },
     cardBodyShaking: {
         animation: "shake 650ms ease",
     },
+    captionBlock: {
+        padding: "16px 24px",
+        borderRadius: 18,
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.82)",
+        boxShadow: "0 10px 22px rgba(0,0,0,0.06)",
+        alignSelf: "stretch",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+    },
     captionText: {
-        fontSize: 18,
-        lineHeight: 1.6,
+        fontSize: 20,
+        lineHeight: 1.7,
         color: "#2c2c2c",
         wordBreak: "break-word",
+        textAlign: "center",
+        maxWidth: 720,
+        margin: "0 auto",
+        width: "100%",
     },
 
     voteHeaderRow: {
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "center",
         justifyContent: "space-between",
-        gap: 12,
-        paddingTop: 2,
+        gap: 16,
+        paddingTop: 4,
     },
     voteHeaderActions: {
         display: "flex",
@@ -1704,9 +1874,9 @@ const styles: Record<string, React.CSSProperties> = {
         marginBottom: 4,
     },
     helperText: {
-        fontSize: 13,
-        lineHeight: 1.35,
-        color: "#6b6b6b",
+        fontSize: 12.5,
+        lineHeight: 1.45,
+        color: "#6f6f6f",
     },
     pillButton: {
         padding: "8px 10px",
@@ -1724,8 +1894,20 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        gap: 12,
+        gap: 22,
         width: "100%",
+    },
+    voteButtonGroup: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
+    },
+    voteButtonLabel: {
+        fontSize: 12,
+        fontWeight: 600,
+        letterSpacing: "0.3px",
+        color: "#5b5b5b",
     },
     voteActions: {
         position: "relative",
@@ -1763,12 +1945,14 @@ const styles: Record<string, React.CSSProperties> = {
     voteButton: {
         padding: "8px 14px",
         borderRadius: 14,
-        border: "1px solid #ddd",
+        border: "1px solid rgba(0,0,0,0.14)",
         background: "#fff",
         cursor: "pointer",
         fontSize: 30,
         lineHeight: 1,
-        transition: "transform 140ms ease",
+        boxShadow: "0 8px 16px rgba(0,0,0,0.08)",
+        transition:
+            "transform 140ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease",
     },
     voteButtonDisabled: {
         opacity: 0.5,
@@ -1784,6 +1968,7 @@ const styles: Record<string, React.CSSProperties> = {
         padding: "6px 8px",
         borderRadius: 10,
         width: "fit-content",
+        animation: "voteStatusFade 1200ms ease",
     },
     voteError: {
         fontSize: 12.5,
@@ -1796,13 +1981,14 @@ const styles: Record<string, React.CSSProperties> = {
     },
 
     remainingText: {
-        fontSize: 13,
-        color: "#5f5f5f",
-        marginTop: 4,
+        fontSize: 12.5,
+        color: "#6f6f6f",
+        marginTop: 2,
+        textAlign: "left",
     },
     nextStepHint: {
-        marginTop: 8,
-        padding: "10px 12px",
+        marginTop: 6,
+        padding: "10px 14px",
         borderRadius: 14,
         border: "1px solid rgba(0,0,0,0.06)",
         background: "rgba(255,255,255,0.6)",
@@ -1951,6 +2137,8 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 14,
         color: "#2a2a2a",
         lineHeight: 1.4,
+        textAlign: "center",
+        wordBreak: "break-word",
     },
     leaderboardLikes: {
         fontSize: 12.5,
