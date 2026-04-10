@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import LoginRequiredScreen from "@/app/components/LoginRequiredScreen"
 import UploadClient from "./UploadClient"
 
 export default async function UploadPage() {
@@ -9,7 +9,8 @@ export default async function UploadPage() {
     } = await supabase.auth.getUser()
 
     if (!user) {
-        redirect("/login?next=/upload")
+        // Auth gate: block upload UI when there is no session.
+        return <LoginRequiredScreen />
     }
 
     return <UploadClient />

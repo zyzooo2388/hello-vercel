@@ -37,15 +37,16 @@ export default function AuthNav() {
         <header style={styles.navShell}>
             <nav style={styles.nav}>
                 <Link href="/" style={styles.navLink}>
-                    Vote
+                    <span style={styles.navLinkLabel}>Vote</span>
+                    <span style={styles.navLinkHint}>Rate captions in seconds</span>
                 </Link>
                 <Link href="/upload" style={styles.navLink}>
-                    Upload
+                    <span style={styles.navLinkLabel}>Upload</span>
+                    <span style={styles.navLinkHint}>Upload an image to generate captions</span>
                 </Link>
             </nav>
             <p style={styles.navDescription}>
-                Vote on whether the caption is humorous, or upload your own image to generate creative and
-                interesting captions.
+                Vote to shape what rises to the top, then check the leaderboard to see what people love.
             </p>
         </header>
     )
@@ -71,12 +72,26 @@ const styles: Record<string, React.CSSProperties> = {
     navLink: {
         textDecoration: "none",
         fontSize: 14,
-        fontWeight: 600,
+        fontWeight: 700,
         color: "#2c2c2c",
-        padding: "6px 10px",
-        borderRadius: 10,
+        padding: "8px 12px",
+        borderRadius: 14,
         border: "1px solid rgba(0,0,0,0.08)",
         background: "rgba(255,255,255,0.7)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+    },
+    navLinkLabel: {
+        fontSize: 13.5,
+        fontWeight: 750,
+        letterSpacing: "0.2px",
+    },
+    navLinkHint: {
+        fontSize: 12.5,
+        fontWeight: 500,
+        color: "#6b6b6b",
+        lineHeight: 1.2,
     },
     navDescription: {
         maxWidth: 960,

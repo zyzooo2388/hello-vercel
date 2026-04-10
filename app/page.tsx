@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
+import LoginRequiredScreen from "@/app/components/LoginRequiredScreen";
 
 type CaptionRow = {
     id: string;
@@ -322,6 +324,39 @@ function VoteButtons({
     );
 }
 
+function IntroScreen({ onGetStarted }: { onGetStarted: () => void }) {
+    return (
+        <div style={styles.page}>
+            <div style={styles.introCard}>
+                <div style={styles.introBadge}>Getting Started</div>
+                <h1 style={styles.introTitle}>Welcome to Caption Vote</h1>
+                <p style={styles.introDescription}>
+                    This app lets you explore funny AI-generated captions for images.
+                </p>
+                <div style={styles.introSection}>
+                    <div style={styles.introSectionTitle}>How it works</div>
+                    <ul style={styles.introList}>
+                        <li style={styles.introListItem}>
+                            Vote on whether captions are humorous using the like or dislike buttons
+                        </li>
+                        <li style={styles.introListItem}>
+                            Upload your own image to generate creative captions
+                        </li>
+                        <li style={styles.introListItem}>
+                            Explore popular captions on the leaderboard
+                        </li>
+                    </ul>
+                </div>
+                <div style={styles.introActions}>
+                    <button onClick={onGetStarted} style={styles.introButton}>
+                        Get Started
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function HomePage() {
     const supabase = useMemo(() => createClient(), []);
     const didInitRef = useRef(false);
@@ -360,6 +395,7 @@ export default function HomePage() {
         mostLiked: LeaderboardItem[];
         topWeek: LeaderboardItem[];
     } | null>(null);
+    const [hasSeenIntro, setHasSeenIntro] = useState<boolean | null>(null);
 
     const badImageIdsRef = useRef(new Set<string>());
     const queueRef = useRef<CaptionRowWithImage[]>([]);
@@ -374,6 +410,16 @@ export default function HomePage() {
     useEffect(() => {
         queueRef.current = queue;
     }, [queue]);
+
+    useEffect(() => {
+        const stored = window.localStorage.getItem("hasSeenIntro");
+        setHasSeenIntro(stored === "true");
+    }, []);
+
+    const handleGetStarted = () => {
+        window.localStorage.setItem("hasSeenIntro", "true");
+        setHasSeenIntro(true);
+    };
 
     useEffect(() => {
         return () => {
@@ -716,8 +762,8 @@ export default function HomePage() {
     }, [supabase, isDev]);
 
     useEffect(() => {
-        if (!authReady) return;
-        const loadKey = `${userId ?? "anon"}:initial`;
+        if (!authReady || !userId) return;
+        const loadKey = `${userId}:initial`;
         if (
             inFlightLoadKeyRef.current === loadKey ||
             loadedForKeyRef.current === loadKey
@@ -745,21 +791,6 @@ export default function HomePage() {
             return nextQueue;
         });
         setTotalCount((prev) => Math.max(prev - 1, 0));
-    }
-
-    async function signInWithGoogle() {
-        setError(null);
-        setAuthLoading(true);
-
-        const { error } = await supabase.auth.signInWithOAuth({
-            provider: "google",
-            options: {
-                redirectTo: `${window.location.origin}/auth/callback`,
-            },
-        });
-
-        if (error) setError(error.message);
-        setAuthLoading(false);
     }
 
     async function signOut() {
@@ -1041,7 +1072,8 @@ export default function HomePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentCaptionId]);
 
-    if (loading) {
+    // Auth gate: block vote UI until the session is ready and authenticated.
+    if (!authReady) {
         return (
             <div style={styles.page}>
                 <div style={styles.loading}>Loading…</div>
@@ -1049,31 +1081,18 @@ export default function HomePage() {
         );
     }
 
-    if (!userEmail) {
+    if (!userId) {
+        return <LoginRequiredScreen />;
+    }
+
+    if (hasSeenIntro === false) {
+        return <IntroScreen onGetStarted={handleGetStarted} />;
+    }
+
+    if (loading || hasSeenIntro === null) {
         return (
             <div style={styles.page}>
-                <div style={styles.loginCard}>
-                    <div style={styles.badge}>Protected Rater</div>
-                    <h1 style={styles.loginTitle}>Welcome</h1>
-                    <p style={styles.loginSubtitle}>Please sign in to rate captions.</p>
-
-                    <button
-                        onClick={signInWithGoogle}
-                        disabled={authLoading}
-                        style={{
-                            ...styles.primaryButton,
-                            ...(authLoading ? styles.primaryButtonDisabled : {}),
-                        }}
-                    >
-                        <span style={styles.googleDot} />
-                        {authLoading ? "Redirecting…" : "Sign in with Google"}
-                    </button>
-
-                    {error && <p style={styles.errorText}>{error}</p>}
-                    <p style={styles.loginFootnote}>
-                        You’ll be redirected to Google and then back to <code>/auth/callback</code>.
-                    </p>
-                </div>
+                <div style={styles.loading}>Loading…</div>
             </div>
         );
     }
@@ -1103,7 +1122,9 @@ export default function HomePage() {
                             onClick={handleOpenLeaderboard}
                             style={styles.secondaryButton}
                         >
-                            Leaderboard
+                            <span style={styles.buttonLabelRow}>
+                                Leaderboard <span style={styles.softBadge}>Popular</span>
+                            </span>
                         </button>
                         <button
                             onClick={signOut}
@@ -1190,6 +1211,25 @@ export default function HomePage() {
                                 {currentCaption?.content ?? "(no caption)"}
                             </div>
 
+                            <div style={styles.voteHeaderRow}>
+                                <div>
+                                    <div style={styles.sectionLabel}>Vote</div>
+                                    <div style={styles.helperText}>
+                                        Tap 🧡 if it&apos;s funny. Tap 😵 if it&apos;s not.
+                                    </div>
+                                </div>
+                                <div style={styles.voteHeaderActions}>
+                                    <button
+                                        type="button"
+                                        onClick={handleOpenLeaderboard}
+                                        style={styles.pillButton}
+                                        className="pill-button"
+                                    >
+                                        Leaderboard
+                                    </button>
+                                </div>
+                            </div>
+
                             <div style={styles.voteActions}>
                                 <VoteButtons
                                     onVote={(value) => {
@@ -1230,6 +1270,16 @@ export default function HomePage() {
                             <div style={styles.remainingText}>
                                 {remaining} captions left to vote
                             </div>
+
+                            <div style={styles.nextStepHint}>
+                                <span style={styles.helperText}>
+                                    Want to generate captions for your own image?{" "}
+                                    <Link href="/upload" style={styles.inlineLink}>
+                                        Upload an image
+                                    </Link>
+                                    .
+                                </span>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -1248,7 +1298,7 @@ export default function HomePage() {
                             <div>
                                 <div style={styles.leaderboardTitle}>Caption Leaderboard</div>
                                 <div style={styles.leaderboardSubtitle}>
-                                    Top captions based on likes
+                                    See which captions are most popular
                                 </div>
                             </div>
                             <button
@@ -1395,6 +1445,84 @@ const styles: Record<string, React.CSSProperties> = {
         boxShadow: "0 20px 40px rgba(0,0,0,0.08)",
     },
 
+    // Intro screen
+    introCard: {
+        width: "min(560px, 100%)",
+        margin: "10vh auto 0",
+        background: "rgba(255,255,255,0.9)",
+        border: "1px solid rgba(0,0,0,0.06)",
+        borderRadius: 24,
+        padding: "44px 40px",
+        textAlign: "center",
+        boxShadow: "0 24px 56px rgba(0,0,0,0.10)",
+        backdropFilter: "blur(10px)",
+    },
+    introBadge: {
+        display: "inline-block",
+        padding: "6px 12px",
+        borderRadius: 999,
+        fontSize: 12,
+        letterSpacing: "0.4px",
+        color: "#3b3b3b",
+        background: "rgba(0,0,0,0.04)",
+        marginBottom: 16,
+    },
+    introTitle: {
+        margin: 0,
+        fontSize: 36,
+        fontWeight: 650,
+        color: "#1f1f1f",
+    },
+    introDescription: {
+        margin: "14px 0 26px",
+        fontSize: 16,
+        lineHeight: 1.7,
+        color: "#5a5a5a",
+    },
+    introSection: {
+        textAlign: "left",
+        background: "rgba(255,255,255,0.7)",
+        borderRadius: 16,
+        padding: "18px 20px",
+        border: "1px solid rgba(0,0,0,0.05)",
+    },
+    introSectionTitle: {
+        fontSize: 13,
+        fontWeight: 700,
+        letterSpacing: "0.5px",
+        textTransform: "uppercase",
+        color: "#3b3b3b",
+        marginBottom: 10,
+    },
+    introList: {
+        margin: 0,
+        paddingLeft: 20,
+        color: "#4a4a4a",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        lineHeight: 1.6,
+        fontSize: 14.5,
+    },
+    introListItem: {
+        margin: 0,
+    },
+    introActions: {
+        marginTop: 26,
+        display: "flex",
+        justifyContent: "center",
+    },
+    introButton: {
+        padding: "10px 14px",
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "rgba(255,255,255,0.75)",
+        color: "#2c2c2c",
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: "pointer",
+    },
+
     // Login card
     loginCard: {
         width: "min(440px, 100%)",
@@ -1467,6 +1595,23 @@ const styles: Record<string, React.CSSProperties> = {
         cursor: "pointer",
     },
     secondaryButtonDisabled: { opacity: 0.6, cursor: "not-allowed" },
+    buttonLabelRow: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+    },
+    softBadge: {
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#5a3a2c",
+        background: "rgba(208, 165, 133, 0.22)",
+        border: "1px solid rgba(208, 165, 133, 0.35)",
+        letterSpacing: "0.2px",
+    },
 
     raterShell: {
         maxWidth: 900,
@@ -1537,6 +1682,44 @@ const styles: Record<string, React.CSSProperties> = {
         wordBreak: "break-word",
     },
 
+    voteHeaderRow: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 12,
+        paddingTop: 2,
+    },
+    voteHeaderActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexShrink: 0,
+    },
+    sectionLabel: {
+        fontSize: 12,
+        fontWeight: 800,
+        letterSpacing: "0.5px",
+        textTransform: "uppercase",
+        color: "#3b3b3b",
+        marginBottom: 4,
+    },
+    helperText: {
+        fontSize: 13,
+        lineHeight: 1.35,
+        color: "#6b6b6b",
+    },
+    pillButton: {
+        padding: "8px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "rgba(255,255,255,0.72)",
+        color: "#2c2c2c",
+        fontSize: 13,
+        fontWeight: 650,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        transition: "transform 140ms ease",
+    },
     voteButtonsRow: {
         display: "flex",
         justifyContent: "center",
@@ -1616,6 +1799,19 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 13,
         color: "#5f5f5f",
         marginTop: 4,
+    },
+    nextStepHint: {
+        marginTop: 8,
+        padding: "10px 12px",
+        borderRadius: 14,
+        border: "1px solid rgba(0,0,0,0.06)",
+        background: "rgba(255,255,255,0.6)",
+    },
+    inlineLink: {
+        color: "#2c2c2c",
+        fontWeight: 650,
+        textDecoration: "underline",
+        textUnderlineOffset: 3,
     },
 
     emptyCard: {

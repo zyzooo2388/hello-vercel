@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
 
 type GenerateUrlResponse = {
@@ -335,12 +336,15 @@ export default function UploadClient() {
                     <div>
                         <h1 style={styles.title}>Upload an Image</h1>
                         <p style={styles.subtitle}>
-                            Upload a photo and generate caption ideas from the pipeline.
+                            Upload an image to generate captions.
                         </p>
                     </div>
                 </header>
 
                 <section style={styles.card}>
+                    <div style={styles.helperText}>
+                        Upload an image to generate captions you can copy and share.
+                    </div>
                     <label style={styles.label}>
                         Select image
                         <input
@@ -382,6 +386,13 @@ export default function UploadClient() {
 
                     {progress && <div style={styles.progress}>{progress}</div>}
                     {error && <div style={styles.error}>{error}</div>}
+                    <div style={styles.footerHint}>
+                        Want to help rank captions?{" "}
+                        <Link href="/" style={styles.inlineLink}>
+                            Go to voting
+                        </Link>
+                        .
+                    </div>
                 </section>
 
                 {(previewSrc || uploadedCdnUrl) && (
@@ -572,6 +583,11 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 15,
         color: "#5a5550",
     },
+    helperText: {
+        fontSize: 13,
+        lineHeight: 1.45,
+        color: "#6b6b6b",
+    },
     card: {
         padding: 22,
         borderRadius: 18,
@@ -626,6 +642,17 @@ const styles: Record<string, React.CSSProperties> = {
         border: "1px solid rgba(180, 35, 24, 0.18)",
         padding: "10px 12px",
         borderRadius: 10,
+    },
+    footerHint: {
+        fontSize: 13,
+        color: "#6b6b6b",
+        lineHeight: 1.35,
+    },
+    inlineLink: {
+        color: "#2c2c2c",
+        fontWeight: 650,
+        textDecoration: "underline",
+        textUnderlineOffset: 3,
     },
     resultCard: {
         borderRadius: 18,
