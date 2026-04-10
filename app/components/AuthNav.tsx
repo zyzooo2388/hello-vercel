@@ -43,6 +43,10 @@ export default function AuthNav() {
                     Upload
                 </Link>
             </nav>
+            <p style={styles.navDescription}>
+                Vote on whether the caption is humorous, or upload your own image to generate creative and
+                interesting captions.
+            </p>
         </header>
     )
 }
@@ -73,5 +77,13 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: 10,
         border: "1px solid rgba(0,0,0,0.08)",
         background: "rgba(255,255,255,0.7)",
+    },
+    navDescription: {
+        maxWidth: 960,
+        margin: "12px auto 14px",
+        padding: "0 20px 12px",
+        fontSize: 14,
+        lineHeight: 1.5,
+        color: "#6b6b6b",
     },
 }

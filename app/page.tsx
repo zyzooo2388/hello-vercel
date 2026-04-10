@@ -55,6 +55,10 @@ type ReactionBurst = {
     particles: ReactionParticle[];
 };
 
+type CSSVariableProperties = React.CSSProperties & {
+    [key: `--${string}`]: string;
+};
+
 function getImageUrl(caption: CaptionRowWithImage | null | undefined) {
     return caption?.image_url?.trim() ?? "";
 }
@@ -192,6 +196,9 @@ type StoredQueue = {
 };
 
 const STORAGE_PREFIX = "voteQueue:";
+// Keep a short rolling history of recently shown images so we can avoid
+// showing the same image again too soon (even if the caption changes).
+const RECENT_IMAGE_WINDOW_SIZE = 8;
 const POOL_SIZE = 300;
 const FETCH_BATCH_SIZE = 500;
 
@@ -217,6 +224,44 @@ function readStoredQueue(userId: string): StoredQueue | null {
 function persistQueue(userId: string, queue: CaptionRowWithImage[]) {
     if (typeof window === "undefined") return;
     sessionStorage.setItem(getStorageKey(userId), JSON.stringify({ queue }));
+}
+
+function pushRecentImageId(recent: string[], imageId: string | null, maxSize = RECENT_IMAGE_WINDOW_SIZE) {
+    if (!imageId) return;
+    // Avoid double-pushing if multiple effects record the same current image.
+    if (recent[recent.length - 1] === imageId) return;
+    recent.push(imageId);
+    if (recent.length > maxSize) {
+        recent.splice(0, recent.length - maxSize);
+    }
+}
+
+function advanceQueueAvoidingRecentImages(
+    prevQueue: CaptionRowWithImage[],
+    recentImageIds: string[],
+) {
+    if (prevQueue.length <= 1) return [];
+
+    const rest = prevQueue.slice(1);
+    if (rest.length <= 1) return rest;
+
+    // Prefer image diversity first: pick the earliest caption whose image is not
+    // in the recent window. This prevents consecutive (or near-consecutive)
+    // repeats when multiple captions share the same image.
+    const recentSet = new Set(recentImageIds);
+    const nextIndex = rest.findIndex((item) => {
+        const imageId = item.image_id;
+        if (!imageId) return true;
+        return !recentSet.has(imageId);
+    });
+
+    if (nextIndex <= 0) {
+        // nextIndex === 0 => already diverse; nextIndex === -1 => no alternatives available.
+        return rest;
+    }
+
+    const [nextItem] = rest.splice(nextIndex, 1);
+    return [nextItem, ...rest];
 }
 
 function VoteButtons({
@@ -318,6 +363,7 @@ export default function HomePage() {
 
     const badImageIdsRef = useRef(new Set<string>());
     const queueRef = useRef<CaptionRowWithImage[]>([]);
+    const recentImageIdsRef = useRef<string[]>([]);
     const leaderboardRequestRef = useRef(0);
     const reactionTimeoutsRef = useRef<Record<string, number>>({});
     const shakeTimeoutRef = useRef<number | null>(null);
@@ -527,6 +573,9 @@ export default function HomePage() {
         if (isDev) console.log("[vote] load:start", { loadKey, force });
         setLoading(true);
         setError(null);
+        // Reset the recent-image window whenever we (re)load the queue so the
+        // diversity logic stays aligned with what the user sees in this session.
+        recentImageIdsRef.current = [];
 
         try {
             const { data: sessionData } = await supabase.auth.getSession();
@@ -726,15 +775,24 @@ export default function HomePage() {
 
     async function animateAndAdvance(dir: "left" | "right") {
         if (isAnimating) return;
+
+        // Record the current image before advancing so the next selection can
+        // avoid repeating it (or other recently shown images) when possible.
+        const current = queueRef.current[0];
+        pushRecentImageId(recentImageIdsRef.current, current?.image_id ?? null);
+
         setIsAnimating(true);
         setAnimDir(dir);
         setAnimAngle(randomAngle(dir));
         setAnimState("out");
 
         await new Promise((resolve) => setTimeout(resolve, 280));
-        const hasNext = queue.length > 1;
+        const hasNext = queueRef.current.length > 1;
         setQueue((prev) => {
-            const nextQueue = prev.slice(1);
+            const nextQueue = advanceQueueAvoidingRecentImages(
+                prev,
+                recentImageIdsRef.current,
+            );
             if (userId) persistQueue(userId, nextQueue);
             return nextQueue;
         });
@@ -917,6 +975,21 @@ export default function HomePage() {
 
     const currentCaption = queue[0];
     const currentCaptionId = currentCaption?.id ?? null;
+
+    useEffect(() => {
+        if (!currentCaption) return;
+        if (
+            !isCaptionVotable(currentCaption) ||
+            (currentCaption.image_id &&
+                badImageIdsRef.current.has(currentCaption.image_id))
+        ) {
+            return;
+        }
+        // Maintain a small rolling window of recently shown images so we can
+        // select a different image for the next voting round when available.
+        pushRecentImageId(recentImageIdsRef.current, currentCaption.image_id);
+    }, [currentCaptionId, currentCaption, isDev]);
+
     useLayoutEffect(() => {
         if (!currentCaption) return;
         if (
@@ -935,7 +1008,10 @@ export default function HomePage() {
         }
 
         setQueue((prev) => {
-            const nextQueue = prev.slice(1);
+            const nextQueue = advanceQueueAvoidingRecentImages(
+                prev,
+                recentImageIdsRef.current,
+            );
             if (userId) persistQueue(userId, nextQueue);
             return nextQueue;
         });
@@ -1071,24 +1147,24 @@ export default function HomePage() {
                                     {burst.particles.map((particle) => (
                                         <span
                                             key={particle.id}
-                                            style={{
-                                                ...styles.reactionItem,
-                                                ...(burst.type === "like"
-                                                    ? styles.reactionLike
-                                                    : styles.reactionDislike),
-                                                left: `${burst.originX + particle.xOffset}px`,
-                                                top: `${burst.originY}px`,
-                                                fontSize: `${particle.sizePx}px`,
-                                                animation: `reactionBurst ${particle.durationMs}ms ease-out ${particle.delayMs}ms forwards`,
-                                                ["--drift-x" as any]: `${particle.driftX}px`,
-                                                ["--float-y" as any]: `${particle.floatY}px`,
-                                                ["--rotate" as any]: `${particle.rotateDeg}deg`,
-                                            } as React.CSSProperties}
-                                        >
-                                            {particle.emoji}
-                                        </span>
-                                    ))}
-                                </div>
+	                                            style={{
+	                                                ...styles.reactionItem,
+	                                                ...(burst.type === "like"
+	                                                    ? styles.reactionLike
+	                                                    : styles.reactionDislike),
+	                                                left: `${burst.originX + particle.xOffset}px`,
+	                                                top: `${burst.originY}px`,
+	                                                fontSize: `${particle.sizePx}px`,
+	                                                animation: `reactionBurst ${particle.durationMs}ms ease-out ${particle.delayMs}ms forwards`,
+	                                                ["--drift-x"]: `${particle.driftX}px`,
+	                                                ["--float-y"]: `${particle.floatY}px`,
+	                                                ["--rotate"]: `${particle.rotateDeg}deg`,
+	                                            } as CSSVariableProperties}
+	                                        >
+	                                            {particle.emoji}
+	                                        </span>
+	                                    ))}
+	                                </div>
                             ))}
                         </div>
                         <div style={styles.imageWrap}>
