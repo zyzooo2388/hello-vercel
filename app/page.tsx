@@ -30,10 +30,14 @@ type LeaderboardItem = LeaderboardCaptionRow & {
 
 type CaptionRowJoined = {
     id: string;
-    content: string | null;
+    content: unknown;
     image_id: string | null;
     created_datetime_utc: string | null;
     images: { id: string; url: string | null } | { id: string; url: string | null }[] | null;
+};
+
+type LeaderboardCaptionRowJoined = CaptionRowJoined & {
+    like_count: number | string | null;
 };
 
 type ReactionParticle = {
@@ -70,9 +74,29 @@ function hasValidImage(caption: CaptionRowWithImage | null | undefined) {
     return trimmed.length > 0;
 }
 
-function hasValidContent(caption: CaptionRowWithImage | null | undefined) {
-    if (!caption?.content) return false;
-    return caption.content.trim().length > 0;
+function isValidCaption(text: string) {
+    if (!text) return false;
+
+    const t = text.trim();
+    if (t.length < 5) return false;
+
+    if (t.startsWith("{")) return false;
+    if (t.startsWith("[")) return false;
+    if (t.includes('"id":')) return false;
+    if (t.includes('"image_id":')) return false;
+    if (t.includes("created_datetime_utc")) return false;
+    if (t.includes("modified_datetime_utc")) return false;
+    if (t.includes("profile_id")) return false;
+
+    const jsonKeyPatternCount = t.match(/"[^"]+"\s*:/g)?.length ?? 0;
+    if (jsonKeyPatternCount >= 3) return false;
+
+    return true;
+}
+
+function hasValidContent(caption: CaptionRowWithImage | LeaderboardItem | null | undefined) {
+    if (typeof caption?.content !== "string") return false;
+    return isValidCaption(caption.content);
 }
 
 function hasValidLeaderboardImage(item: LeaderboardItem | null | undefined) {
@@ -81,7 +105,43 @@ function hasValidLeaderboardImage(item: LeaderboardItem | null | undefined) {
 }
 
 function isCaptionVotable(caption: CaptionRowWithImage | null | undefined) {
-    return hasValidContent(caption) && hasValidImage(caption);
+    return !!caption?.image_id && hasValidContent(caption) && hasValidImage(caption);
+}
+
+function getJoinedImage(
+    caption: CaptionRowJoined | LeaderboardCaptionRowJoined,
+) {
+    const images = caption.images;
+    const image = Array.isArray(images) ? images[0] : images;
+    if (!image || !caption.image_id || image.id !== caption.image_id) return null;
+    return image;
+}
+
+function normalizeJoinedCaption(
+    row: CaptionRowJoined,
+): CaptionRowWithImage {
+    const image = getJoinedImage(row);
+    return {
+        id: row.id,
+        content: typeof row.content === "string" ? row.content : null,
+        image_id: row.image_id,
+        created_datetime_utc: row.created_datetime_utc,
+        image_url: image?.url ?? null,
+    };
+}
+
+function normalizeJoinedLeaderboardCaption(
+    row: LeaderboardCaptionRowJoined,
+): LeaderboardItem {
+    const image = getJoinedImage(row);
+    return {
+        id: row.id,
+        content: typeof row.content === "string" ? row.content : null,
+        image_id: row.image_id,
+        created_datetime_utc: row.created_datetime_utc,
+        like_count: row.like_count,
+        image_url: image?.url ?? null,
+    };
 }
 
 function normalizeCaptions({
@@ -94,6 +154,7 @@ function normalizeCaptions({
     isDev: boolean;
 }) {
     let missingContent = 0;
+    let missingImageId = 0;
     let missingUrl = 0;
     const skippedImageIds = new Set<string>();
 
@@ -101,6 +162,11 @@ function normalizeCaptions({
         if (!hasValidContent(caption)) {
             missingContent += 1;
             if (caption.image_id) skippedImageIds.add(caption.image_id);
+            return false;
+        }
+
+        if (!caption.image_id) {
+            missingImageId += 1;
             return false;
         }
 
@@ -117,6 +183,7 @@ function normalizeCaptions({
     if (isDev) {
         console.log("[vote] normalize:filter", {
             missingContent,
+            missingImageId,
             missingUrl,
             skippedImageIds: Array.from(skippedImageIds),
         });
@@ -253,7 +320,7 @@ function advanceQueueAvoidingRecentImages(
     const recentSet = new Set(recentImageIds);
     const nextIndex = rest.findIndex((item) => {
         const imageId = item.image_id;
-        if (!imageId) return true;
+        if (!imageId) return false;
         return !recentSet.has(imageId);
     });
 
@@ -463,10 +530,10 @@ export default function HomePage() {
     }, []);
 
     function filterBadImages(list: CaptionRowWithImage[]) {
-        if (badImageIdsRef.current.size === 0) return list;
         return list.filter(
             (caption) =>
-                !caption.image_id || !badImageIdsRef.current.has(caption.image_id),
+                isCaptionVotable(caption) &&
+                !badImageIdsRef.current.has(caption.image_id as string),
         );
     }
 
@@ -499,17 +566,7 @@ export default function HomePage() {
             fetchedCount += rows.length;
             offset += FETCH_BATCH_SIZE;
 
-            const normalizedBatch: CaptionRowWithImage[] = rows.map((row) => {
-                const images = row.images;
-                const image = Array.isArray(images) ? images[0] : images;
-                return {
-                    id: row.id,
-                    content: row.content,
-                    image_id: row.image_id,
-                    created_datetime_utc: row.created_datetime_utc,
-                    image_url: image?.url ?? null,
-                };
-            });
+            const normalizedBatch = rows.map(normalizeJoinedCaption);
 
             const { validCaptions } = normalizeCaptions({
                 captions: normalizedBatch,
@@ -536,7 +593,9 @@ export default function HomePage() {
     }) {
         let query = supabase
             .from("captions")
-            .select("id, content, image_id, created_datetime_utc, like_count")
+            .select("id, content, image_id, created_datetime_utc, like_count, images ( id, url )")
+            .not("content", "is", null)
+            .neq("content", "")
             .not("image_id", "is", null)
             .order("like_count", { ascending: false })
             .limit(limit);
@@ -550,38 +609,15 @@ export default function HomePage() {
             return { items: [] as LeaderboardItem[], error: error.message };
         }
 
-        const rows = (data ?? []) as LeaderboardCaptionRow[];
-        if (rows.length === 0) {
-            return { items: [] as LeaderboardItem[], error: null };
-        }
-
-        const imageIds = Array.from(
-            new Set(rows.map((row) => row.image_id).filter(Boolean)),
-        ) as string[];
-
-        if (imageIds.length === 0) {
-            return { items: [] as LeaderboardItem[], error: null };
-        }
-
-        const { data: imageData, error: imageError } = await supabase
-            .from("images")
-            .select("id, url")
-            .in("id", imageIds);
-
-        if (imageError) {
-            return { items: [] as LeaderboardItem[], error: imageError.message };
-        }
-
-        const imageMap = new Map<string, string | null>(
-            (imageData ?? []).map((image) => [image.id, image.url ?? null]),
-        );
-
+        const rows = (data ?? []) as LeaderboardCaptionRowJoined[];
         const items = rows
-            .map((row) => ({
-                ...row,
-                image_url: row.image_id ? imageMap.get(row.image_id) ?? null : null,
-            }))
-            .filter((item) => hasValidLeaderboardImage(item));
+            .map(normalizeJoinedLeaderboardCaption)
+            .filter(
+                (item) =>
+                    !!item.image_id &&
+                    hasValidContent(item) &&
+                    hasValidLeaderboardImage(item),
+            );
 
         return { items, error: null };
     }
@@ -1062,8 +1098,7 @@ export default function HomePage() {
         if (!currentCaption) return;
         if (
             isCaptionVotable(currentCaption) &&
-            (!currentCaption.image_id ||
-                !badImageIdsRef.current.has(currentCaption.image_id))
+            !badImageIdsRef.current.has(currentCaption.image_id as string)
         ) {
             return;
         }
@@ -1187,7 +1222,11 @@ export default function HomePage() {
                 {error && <p style={{ ...styles.errorText, marginTop: 8 }}>{error}</p>}
 
                 {remaining === 0 ? (
-                    <div style={styles.emptyCard}>All done. Thanks for voting!</div>
+                    <div style={styles.emptyCard}>
+                        {total === 0
+                            ? "More captions coming soon."
+                            : "All done. Thanks for voting!"}
+                    </div>
                 ) : (
                     <div
                         key={currentCaption?.id}
